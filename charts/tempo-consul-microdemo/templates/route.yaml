@@ -1,0 +1,25 @@
+{{- if .Values.openshift.routes.enabled }}
+{{- if .Values.openshift.routes.frontend.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  to:
+    kind: Service
+    name: frontend
+  port:
+    targetPort: http
+  {{- with .Values.openshift.routes.frontend.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.openshift.routes.frontend.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+{{- end }}

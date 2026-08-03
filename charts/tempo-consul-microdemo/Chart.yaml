@@ -1,0 +1,10 @@
+apiVersion: v2
+name: tempo-consul-microdemo
+description: >
+  Helm chart for the tempo-consul-microdemo microservices application.
+  Deploys six Go services, an OpenTelemetry Collector, and optional
+  Grafana Tempo for end-to-end distributed tracing on Kubernetes / OpenShift
+  with Consul Service Mesh.
+type: application
+version: 0.2.0
+appVersion: "1.0.0"

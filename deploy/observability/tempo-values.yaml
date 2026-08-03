@@ -1,0 +1,91 @@
+# Grafana Tempo — Helm values for production deployment
+# Deploys Tempo in microservices mode (distributor, ingester, querier, query-frontend,
+# compactor) backed by S3-compatible object storage.
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace tempo
+#   helm install tempo grafana/tempo-distributed \
+#       --namespace tempo \
+#       --values deploy/observability/tempo-values.yaml
+#
+# Reference: https://grafana.com/docs/tempo/latest/setup/helm-chart/
+
+tempo-distributed:
+  # ─── Global ──────────────────────────────────────────────────────────────
+  global:
+    clusterDomain: cluster.local
+
+  # ─── Object Storage (S3 example — adjust for GCS, Azure, or MinIO) ───────
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-traces          # replace with your bucket name
+        endpoint: s3.amazonaws.com
+        region: us-east-1
+        # Use IAM role / workload identity rather than static credentials where possible.
+        # access_key and secret_key can be injected via a Kubernetes Secret:
+        #   access_key: ${AWS_ACCESS_KEY_ID}
+        #   secret_key: ${AWS_SECRET_ACCESS_KEY}
+
+  # ─── Receivers ────────────────────────────────────────────────────────────
+  distributor:
+    replicas: 2
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "0.0.0.0:4317"
+            http:
+              endpoint: "0.0.0.0:4318"
+
+  ingester:
+    replicas: 3
+    config:
+      replication_factor: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  querier:
+    replicas: 2
+
+  queryFrontend:
+    replicas: 2
+
+  compactor:
+    replicas: 1
+
+  # ─── Retention ────────────────────────────────────────────────────────────
+  config:
+    compactor:
+      compaction:
+        block_retention: 720h  # 30 days
+
+  # ─── Tracing-level search ─────────────────────────────────────────────────
+  search:
+    enabled: true
+
+  # ─── Resource requests (tune for your cluster) ────────────────────────────
+  ingester:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+  querier:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+  # ─── ServiceMonitor for Prometheus scraping ───────────────────────────────
+  serviceMonitor:
+    enabled: true
+    interval: 30s

@@ -1,0 +1,190 @@
+global:
+  imageRegistry: quay.io/chris_lovett/tempo-consul-microdemo
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: quay-pull
+
+# ─── Consul Service Mesh ───────────────────────────────────────────────────────
+consul:
+  connectInject: true
+  transparentProxy: true
+  # Expose consul-dataplane /metrics on the pod network for Prometheus scraping
+  telemetryPromBindAddress: "0.0.0.0:20200"
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext: {}
+
+appSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+waitForDependencies:
+  enabled: false
+  image: curlimages/curl:8.8.0
+  imagePullPolicy: IfNotPresent
+
+# ─── OpenTelemetry Collector ──────────────────────────────────────────────────
+# The collector is the single aggregation point between the six Go services and
+# Grafana Tempo.  Services send spans over OTLP/gRPC to otel-collector:4317;
+# the collector batches and forwards them to Tempo via OTLP/gRPC.
+otelCollector:
+  enabled: true
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.113.0"
+  # Tempo OTLP/gRPC endpoint – set to your Tempo distributor service.
+  # If Tempo is deployed in the same cluster via the Grafana Helm chart:
+  #   tempo-distributor.tempo.svc.cluster.local:4317
+  tempoEndpoint: "tempo-distributor.tempo.svc.cluster.local:4317"
+  tempoTLSInsecure: true   # set false and configure certs for production mTLS
+  debug: false             # set true to emit span details to collector logs
+  service:
+    grpcPort: 4317
+    httpPort: 4318
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ─── Application Services ─────────────────────────────────────────────────────
+services:
+  frontend:
+    replicas: 1
+    image:
+      repository: frontend
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8080
+    dependsOn: [otel-collector, catalog, cart, checkout]
+    consulUpstreams: "catalog:8081,cart:8082,checkout:8083,payment:8084,inventory:8085"
+    env:
+      SERVICE_NAME: frontend
+      PORT: "8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+      CATALOG_URL: http://catalog:8081
+      CART_URL: http://cart:8082
+      CHECKOUT_URL: http://checkout:8083
+      PAYMENT_URL: http://payment:8084
+      INVENTORY_URL: http://inventory:8085
+    resources: {}
+
+  catalog:
+    replicas: 1
+    image:
+      repository: catalog
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8081
+    dependsOn: [otel-collector]
+    env:
+      SERVICE_NAME: catalog
+      PORT: "8081"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+    resources: {}
+
+  cart:
+    replicas: 1
+    image:
+      repository: cart
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8082
+    dependsOn: [otel-collector, catalog]
+    consulUpstreams: "catalog:8081"
+    env:
+      SERVICE_NAME: cart
+      PORT: "8082"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+      CATALOG_URL: http://catalog:8081
+    resources: {}
+
+  checkout:
+    replicas: 1
+    image:
+      repository: checkout
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8083
+    dependsOn: [otel-collector, cart, inventory, payment]
+    consulUpstreams: "cart:8082,inventory:8085,payment:8084"
+    env:
+      SERVICE_NAME: checkout
+      PORT: "8083"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+      CART_URL: http://cart:8082
+      INVENTORY_URL: http://inventory:8085
+      PAYMENT_URL: http://payment:8084
+    resources: {}
+
+  payment:
+    replicas: 1
+    image:
+      repository: payment
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8084
+    dependsOn: [otel-collector]
+    env:
+      SERVICE_NAME: payment
+      PORT: "8084"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+      PAYMENT_FAILURE_RATE: "0.02"
+      PAYMENT_LATENCY_MS: "50"
+    resources: {}
+
+  inventory:
+    replicas: 1
+    image:
+      repository: inventory
+      tag: 0.2.0
+    service:
+      type: ClusterIP
+      port: 8085
+    dependsOn: [otel-collector]
+    env:
+      SERVICE_NAME: inventory
+      PORT: "8085"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      SAMPLE_RATE: "1.0"
+      INVENTORY_CONTENTION_RATE: "0.05"
+    resources: {}
+
+# ─── OpenShift Routes ─────────────────────────────────────────────────────────
+openshift:
+  routes:
+    enabled: true
+    frontend:
+      enabled: true
+      host: ""
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+
+# ─── Kubernetes Ingress ───────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  frontend:
+    host: ""
+    path: /
+    pathType: Prefix

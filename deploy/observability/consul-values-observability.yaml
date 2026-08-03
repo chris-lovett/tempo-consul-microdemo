@@ -1,0 +1,27 @@
+# Consul values overlay — enable metrics + link Grafana Tempo trace exploration
+# from the Consul service topology UI.
+#
+# Merge with your existing Consul Helm values:
+#   helm upgrade consul hashicorp/consul -n consul \
+#     -f <your-existing-values.yaml> \
+#     -f deploy/observability/consul-values-observability.yaml
+
+connectInject:
+  enabled: true
+  metrics:
+    defaultEnabled: true
+    defaultEnableMerging: false
+    defaultPrometheusScrapePort: 20200
+    defaultPrometheusScrapePath: /metrics
+    enableGatewayMetrics: true
+
+ui:
+  metrics:
+    enabled: true
+    provider: prometheus
+    baseURL: http://prometheus-server.observability.svc.cluster.local
+  dashboardURLTemplates:
+    # Deep-link from Consul service UI to Grafana Tempo trace search.
+    # The {{ "{{" }} ... {{ "}}" }} escaping prevents Helm from consuming Consul's Go templates.
+    service: >-
+      https://grafana.example.com/explore?orgId=1&left=%7B"datasource":"tempo","queries":%5B%7B"refId":"A","queryType":"nativeSearch","serviceName":"{{ "{{" }}Service.Name{{ "}}" }}"%7D%5D,"range":%7B"from":"now-1h","to":"now"%7D%7D

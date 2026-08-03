@@ -1,0 +1,41 @@
+# Grafana data source — Tempo
+# Apply to your Grafana namespace:
+#   kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n observability
+#
+# This creates a GrafanaDatasource CR (Grafana Operator v5+).
+# If you manage Grafana via the community chart instead, add this under
+# grafana.additionalDataSources in your grafana values.yaml.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  datasource:
+    name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
+    isDefault: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki          # link trace spans → Loki logs
+        spanStartTimeShift: "-1m"
+        spanEndTimeShift: "1m"
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: false
+      tracesToMetrics:
+        datasourceUid: prometheus    # link trace spans → Prometheus metrics
+        spanStartTimeShift: "-1m"
+        spanEndTimeShift: "1m"
+      serviceMap:
+        datasourceUid: prometheus    # enables service graph panel
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki
+      httpMethod: GET

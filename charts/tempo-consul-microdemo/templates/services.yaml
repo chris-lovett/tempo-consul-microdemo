@@ -1,0 +1,110 @@
+{{- range $name := keys .Values.services | sortAlpha }}
+{{- $svc := index $.Values.services $name }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+      annotations:
+        {{- if $.Values.consul.connectInject }}
+        consul.hashicorp.com/connect-inject: "true"
+        {{- end }}
+        {{- if $.Values.consul.transparentProxy }}
+        consul.hashicorp.com/transparent-proxy: "true"
+        {{- end }}
+        {{- if $.Values.consul.telemetryPromBindAddress }}
+        consul.hashicorp.com/consul-dataplane-startup-args: "-telemetry-prom-bind-address={{ $.Values.consul.telemetryPromBindAddress }}"
+        {{- end }}
+        {{- if $svc.consulUpstreams }}
+        consul.hashicorp.com/connect-service-upstreams: {{ $svc.consulUpstreams | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and $.Values.waitForDependencies.enabled $svc.dependsOn }}
+      initContainers:
+        {{- range $dep := $svc.dependsOn }}
+        - name: wait-for-{{ $dep }}
+          image: {{ $.Values.waitForDependencies.image | quote }}
+          imagePullPolicy: {{ $.Values.waitForDependencies.imagePullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              until curl -fsS http://{{ $dep }}:{{ include "tempo-consul-microdemo.dependencyPort" (dict "root" $ "dep" $dep) }}/health >/dev/null; do
+              echo "waiting for {{ $dep }}";
+              sleep 2;
+              done
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "tempo-consul-microdemo.appImage" (dict "Values" $.Values "repository" $svc.image.repository "tag" $svc.image.tag) | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.appSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.service.port }}
+              protocol: TCP
+          env:
+            {{- range $k := keys $svc.env | sortAlpha }}
+            - name: {{ $k }}
+              value: {{ index $svc.env $k | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  type: {{ $svc.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+  ports:
+    - name: http
+      port: {{ $svc.service.port }}
+      protocol: TCP
+      targetPort: http
+---
+{{- end }}
