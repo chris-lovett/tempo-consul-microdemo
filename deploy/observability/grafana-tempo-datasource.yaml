@@ -1,41 +1,88 @@
-# Grafana data source — Tempo
-# Apply to your Grafana namespace:
-#   kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n observability
+# Grafana Tempo datasource — standalone Grafana (Helm community chart)
 #
-# This creates a GrafanaDatasource CR (Grafana Operator v5+).
-# If you manage Grafana via the community chart instead, add this under
-# grafana.additionalDataSources in your grafana values.yaml.
-apiVersion: grafana.integreatly.org/v1beta1
-kind: GrafanaDatasource
+# This file contains TWO options depending on how your standalone Grafana is managed.
+# Use whichever matches your deployment — you only need one.
+#
+# ─── Option A: Grafana sidecar provisioning (recommended) ────────────────────
+#
+# The Grafana community Helm chart ships a sidecar container that watches for
+# ConfigMaps labelled grafana_datasource=1 in the same namespace and hot-loads
+# them as datasources — no Grafana restart required.
+#
+# To check whether the sidecar is enabled on your Grafana:
+#   helm get values <grafana-release> -n <grafana-namespace> | grep -A5 sidecar
+# Look for: sidecar.datasources.enabled: true
+#
+# Find your Grafana namespace and release name:
+#   helm list -A | grep grafana
+#
+# Apply (replace <grafana-namespace> with your actual namespace, e.g. monitoring):
+#   kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml \
+#     -n <grafana-namespace>
+#
+# ─── Option B: grafana.ini / values.yaml additionalDataSources ───────────────
+#
+# If the sidecar is disabled, add the datasource block under
+# grafana.additionalDataSources in your Grafana Helm values and run
+# helm upgrade. The YAML block to add is shown in the comment at the bottom
+# of this file.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: tempo
-  namespace: observability
-spec:
-  instanceSelector:
-    matchLabels:
-      dashboards: grafana
-  datasource:
-    name: Tempo
-    type: tempo
-    access: proxy
-    url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
-    isDefault: false
-    jsonData:
-      tracesToLogsV2:
-        datasourceUid: loki          # link trace spans → Loki logs
-        spanStartTimeShift: "-1m"
-        spanEndTimeShift: "1m"
-        filterByTraceID: true
-        filterBySpanID: false
-        customQuery: false
-      tracesToMetrics:
-        datasourceUid: prometheus    # link trace spans → Prometheus metrics
-        spanStartTimeShift: "-1m"
-        spanEndTimeShift: "1m"
-      serviceMap:
-        datasourceUid: prometheus    # enables service graph panel
-      nodeGraph:
-        enabled: true
-      lokiSearch:
-        datasourceUid: loki
-      httpMethod: GET
+  name: grafana-datasource-tempo
+  # Must be the same namespace as your Grafana deployment.
+  # Replace with your actual Grafana namespace (e.g. monitoring, observability).
+  namespace: monitoring
+  labels:
+    # This label triggers the Grafana sidecar to load this datasource.
+    grafana_datasource: "1"
+data:
+  tempo-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        access: proxy
+        # Tempo query-frontend service — adjust namespace if you deployed Tempo elsewhere.
+        url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
+        isDefault: false
+        version: 1
+        editable: true
+        jsonData:
+          tracesToMetrics:
+            # Links span attributes → Prometheus metric queries in Grafana Explore.
+            # datasourceUid must match the UID of your existing Prometheus datasource.
+            # Find it at: Grafana → Administration → Data sources → Prometheus → copy UID
+            datasourceUid: prometheus
+            spanStartTimeShift: "-1m"
+            spanEndTimeShift: "1m"
+          serviceMap:
+            # Powers the Grafana service graph panel.
+            # Requires OTel Collector metrics scraped by Prometheus (see servicemonitor-otel-collector.yaml).
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
+          httpMethod: GET
+
+# ─── Option B block (for grafana.additionalDataSources in values.yaml) ───────
+#
+# grafana:
+#   additionalDataSources:
+#     - name: Tempo
+#       type: tempo
+#       access: proxy
+#       url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
+#       isDefault: false
+#       version: 1
+#       editable: true
+#       jsonData:
+#         tracesToMetrics:
+#           datasourceUid: prometheus   # match your Prometheus datasource UID
+#           spanStartTimeShift: "-1m"
+#           spanEndTimeShift: "1m"
+#         serviceMap:
+#           datasourceUid: prometheus
+#         nodeGraph:
+#           enabled: true
+#         httpMethod: GET

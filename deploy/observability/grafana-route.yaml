@@ -1,0 +1,27 @@
+# OpenShift Route — Grafana UI
+#
+# The Grafana community Helm chart does not create OpenShift Routes natively.
+# Apply this after the Helm install to expose Grafana externally.
+#
+# Replace <your-cluster-domain> with your actual cluster domain, e.g.:
+#   apps.rosa.mycluster.abc123.p1.openshiftapps.com
+#
+# Apply:
+#   kubectl apply -f deploy/observability/grafana-route.yaml -n monitoring
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  # host: grafana.apps.<your-cluster-domain>   # optional: set a specific hostname
+  to:
+    kind: Service
+    name: grafana
+  port:
+    targetPort: service
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

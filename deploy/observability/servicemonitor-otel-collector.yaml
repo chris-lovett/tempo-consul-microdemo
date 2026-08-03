@@ -1,0 +1,48 @@
+# ServiceMonitor — OTel Collector
+#
+# Tells your standalone Prometheus to scrape the OTel Collector's Prometheus
+# metrics endpoint (:8888/metrics). These metrics power the Grafana service
+# graph panel when the Tempo datasource is linked to Prometheus.
+#
+# Prerequisites:
+#   - Prometheus Operator deployed (provides the ServiceMonitor CRD)
+#   - Your Prometheus instance is configured to pick up ServiceMonitors from
+#     the tracing-demo namespace (see serviceMonitorNamespaceSelector note below)
+#
+# ── Prometheus selector note ──────────────────────────────────────────────────
+# Standalone Prometheus instances deployed via the community Helm chart often
+# restrict which namespaces they watch for ServiceMonitors. Check your Prometheus
+# values for serviceMonitorNamespaceSelector — if it only selects specific
+# namespaces or labels you will need to either:
+#   a) Add a matching label to the tracing-demo namespace:
+#        kubectl label namespace tracing-demo prometheus=monitored
+#   b) Or widen the selector in your Prometheus values to include tracing-demo.
+#
+# To check your current selector:
+#   helm get values <prometheus-release> -n <prometheus-namespace> \
+#     | grep -A5 serviceMonitorNamespaceSelector
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Apply:
+#   kubectl apply -f deploy/observability/servicemonitor-otel-collector.yaml -n tracing-demo
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: tracing-demo
+  labels:
+    app.kubernetes.io/name: otel-collector
+    # Add any labels your Prometheus serviceMonitorSelector requires.
+    # Common default for the Prometheus community chart:
+    #   release: prometheus   (replace "prometheus" with your Helm release name)
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+  namespaceSelector:
+    matchNames:
+      - tracing-demo

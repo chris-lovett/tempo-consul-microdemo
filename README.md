@@ -79,6 +79,7 @@ All six Go services share a single [`pkg/tracing`](pkg/tracing/tracing.go) packa
 ### 1. Deploy Grafana Tempo
 
 ```bash
+# Edit deploy/observability/tempo-values.yaml first — set S3 bucket, region, credentials
 helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
 kubectl create namespace tempo
 helm install tempo grafana/tempo-distributed \
@@ -86,13 +87,15 @@ helm install tempo grafana/tempo-distributed \
   --values deploy/observability/tempo-values.yaml
 ```
 
-> **Tip**: Edit `deploy/observability/tempo-values.yaml` to set your S3 bucket, region, and credentials before deploying.
+### 2. Add the Tempo datasource to Grafana
 
-### 2. Add the Tempo data source to Grafana
+Edit `deploy/observability/grafana-tempo-datasource.yaml` — set `metadata.namespace` to your Grafana namespace and update `datasourceUid` to match your existing Prometheus datasource.
 
 ```bash
-kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n observability
+kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n <grafana-namespace>
 ```
+
+> See [`deploy/observability/README.md`](deploy/observability/README.md) for the full step-by-step, including how to handle Grafana installs without the sidecar enabled.
 
 ### 3. Build and push service images
 

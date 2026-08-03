@@ -1,0 +1,83 @@
+# Grafana — Helm values for standalone deployment on OpenShift
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
+#   kubectl create namespace monitoring
+#   helm install grafana grafana/grafana \
+#       --namespace monitoring \
+#       --values deploy/observability/grafana-values.yaml
+#
+# Upgrade after changes:
+#   helm upgrade grafana grafana/grafana \
+#       --namespace monitoring \
+#       --values deploy/observability/grafana-values.yaml
+
+# ─── Admin credentials ────────────────────────────────────────────────────────
+# Override these or inject via a Secret rather than storing in plain text.
+adminUser: admin
+adminPassword: changeme   # replace before deploying
+
+# ─── Persistence ──────────────────────────────────────────────────────────────
+persistence:
+  enabled: true
+  size: 5Gi
+  # storageClassName: ""  # leave blank to use cluster default
+
+# ─── Datasource sidecar ───────────────────────────────────────────────────────
+# Watches for ConfigMaps labelled grafana_datasource=1 in the same namespace
+# and hot-loads them as datasources — no Grafana restart required.
+# grafana-tempo-datasource.yaml depends on this being enabled.
+sidecar:
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    labelValue: "1"
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+
+# ─── OpenShift Route exposure ─────────────────────────────────────────────────
+# Creates an OpenShift Route for the Grafana UI.
+grafana.ini:
+  server:
+    root_url: "%(protocol)s://%(domain)s/"
+    serve_from_sub_path: false
+
+# Expose via a ClusterIP Service; the Route below handles external access.
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# ─── OpenShift Route ──────────────────────────────────────────────────────────
+# The Grafana Helm chart does not natively create OpenShift Routes.
+# After installing, create the Route manually:
+#
+#   oc expose svc/grafana -n monitoring \
+#     --hostname=grafana.apps.<your-cluster-domain>
+#
+# Or apply deploy/observability/grafana-route.yaml (provided separately).
+
+# ─── Resource requests ────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ─── Security context (required for OpenShift) ───────────────────────────────
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  fsGroup: 472
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true

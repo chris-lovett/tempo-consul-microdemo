@@ -1,0 +1,96 @@
+# Prometheus (kube-prometheus-stack) — Helm values for standalone deployment on OpenShift
+#
+# The kube-prometheus-stack chart bundles Prometheus, Alertmanager, and the
+# Prometheus Operator in one release. It is the recommended approach for
+# standalone Prometheus on OpenShift.
+#
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace monitoring
+#   helm install prometheus prometheus-community/kube-prometheus-stack \
+#       --namespace monitoring \
+#       --values deploy/observability/prometheus-values.yaml
+#
+# Upgrade after changes:
+#   helm upgrade prometheus prometheus-community/kube-prometheus-stack \
+#       --namespace monitoring \
+#       --values deploy/observability/prometheus-values.yaml
+
+# ─── Scope: disable components already handled by OpenShift ──────────────────
+# OpenShift ships its own kube-state-metrics and node-exporter in
+# openshift-monitoring. Disable the stack's copies to avoid duplication.
+kubeStateMetrics:
+  enabled: false
+
+nodeExporter:
+  enabled: false
+
+# Disable scraping of OpenShift's own control-plane components — those are
+# already covered by the platform monitoring stack.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# ─── Grafana: disable — we deploy Grafana separately ─────────────────────────
+grafana:
+  enabled: false
+
+# ─── Prometheus ───────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    # Watch ServiceMonitors in all namespaces (including tracing-demo).
+    # Narrow this if you want tighter scope.
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+
+    # Watch PodMonitors in all namespaces.
+    podMonitorNamespaceSelector: {}
+    podMonitorSelector: {}
+
+    retention: 15d
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+    # OpenShift security: Prometheus runs as non-root
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      fsGroup: 65534
+
+# ─── Alertmanager ─────────────────────────────────────────────────────────────
+alertmanager:
+  enabled: false   # set true if you want alerting
+
+# ─── Prometheus Operator ──────────────────────────────────────────────────────
+prometheusOperator:
+  admissionWebhooks:
+    enabled: true
+  securityContext:
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true

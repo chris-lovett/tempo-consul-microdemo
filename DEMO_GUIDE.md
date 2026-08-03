@@ -4,9 +4,67 @@ Step-by-step walkthrough for demonstrating distributed tracing with Grafana Temp
 
 ## Prerequisites
 
-- Application deployed and running (see [README.md](README.md))
-- Grafana accessible with Tempo data source configured
-- `curl` and `jq` available in your terminal
+- Standalone Grafana and Prometheus already deployed in-cluster via Helm
+- `curl`, `jq`, `helm`, and `oc` available in your terminal
+- Consul Service Mesh running on your OpenShift cluster
+
+> **Full observability stack setup** is in [`deploy/observability/README.md`](deploy/observability/README.md). Complete those steps before running the demo flows below.
+
+### Step 1 — Deploy Grafana Tempo
+
+```bash
+# Edit tempo-values.yaml first — set your S3 bucket, region, and credentials
+helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
+kubectl create namespace tempo
+helm install tempo grafana/tempo-distributed \
+  --namespace tempo \
+  --values deploy/observability/tempo-values.yaml
+
+# Wait for all Tempo pods to reach Running
+kubectl get pods -n tempo -w
+```
+
+### Step 2 — Register the Tempo datasource in Grafana
+
+Edit [`deploy/observability/grafana-tempo-datasource.yaml`](deploy/observability/grafana-tempo-datasource.yaml):
+1. Set `metadata.namespace` to your Grafana namespace (find it with `helm list -A | grep grafana`)
+2. Set `datasourceUid` to match your existing Prometheus datasource UID
+   (Grafana → Administration → Data sources → Prometheus → copy UID from URL)
+
+```bash
+kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n <grafana-namespace>
+
+# Verify the datasource loaded (sidecar picks it up within ~30s)
+# Grafana → Administration → Data sources → confirm "Tempo" appears
+```
+
+> If the Grafana sidecar is not enabled, use the Option B `additionalDataSources` block
+> in the same file and run `helm upgrade` on your Grafana release instead.
+
+### Step 3 — Deploy the application
+
+```bash
+kubectl create namespace tracing-demo
+make helm-install NAMESPACE=tracing-demo
+
+# Wait for all pods to be ready
+kubectl get pods -n tracing-demo -w
+```
+
+> See [README.md](README.md) for image build and pull secret instructions.
+
+### Step 4 — Wire Prometheus scraping of the OTel Collector
+
+This enables the service graph panel in Grafana.
+
+Edit [`deploy/observability/servicemonitor-otel-collector.yaml`](deploy/observability/servicemonitor-otel-collector.yaml) — add the label your Prometheus `serviceMonitorSelector` requires (check with `helm get values <prometheus-release> -n <prometheus-namespace> | grep -A5 serviceMonitorSelector`).
+
+```bash
+kubectl apply -f deploy/observability/servicemonitor-otel-collector.yaml -n tracing-demo
+
+# Confirm Prometheus picked it up after ~1 minute
+# Prometheus UI → Status → Targets → filter "otel-collector"
+```
 
 ---
 

@@ -88,6 +88,9 @@ spec:
             - name: health
               containerPort: 13133
               protocol: TCP
+            - name: metrics
+              containerPort: 8888
+              protocol: TCP
           volumeMounts:
             - name: config
               mountPath: /etc/otel
@@ -134,4 +137,8 @@ spec:
       port: {{ .Values.otelCollector.service.httpPort }}
       protocol: TCP
       targetPort: http-otlp
+    - name: metrics
+      port: 8888
+      protocol: TCP
+      targetPort: metrics
 {{- end }}
