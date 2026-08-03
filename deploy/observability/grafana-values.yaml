@@ -1,65 +1,134 @@
-# Grafana — Helm values for standalone deployment on OpenShift
+# Grafana — Helm values for ROSA deployment
+# Pre-configured with Tempo as a tracing datasource.
 #
 # Install:
-#   helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
-#   kubectl create namespace monitoring
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace grafana
+#   oc adm policy add-scc-to-user anyuid \
+#     system:serviceaccount:grafana:grafana \
+#     system:serviceaccount:grafana:default
 #   helm install grafana grafana/grafana \
-#       --namespace monitoring \
+#       --namespace grafana \
 #       --values deploy/observability/grafana-values.yaml
 #
-# Upgrade after changes:
-#   helm upgrade grafana grafana/grafana \
-#       --namespace monitoring \
-#       --values deploy/observability/grafana-values.yaml
+# Reference: https://github.com/grafana/helm-charts/tree/main/charts/grafana
 
 # ─── Admin credentials ────────────────────────────────────────────────────────
-# Override these or inject via a Secret rather than storing in plain text.
+# Set a real password here or use an existing secret. Do NOT commit plaintext
+# passwords to git — override via --set or a sealed secret in production.
+#
+# To use an existing Kubernetes secret instead:
+#   admin:
+#     existingSecret: grafana-admin-secret
+#     userKey: admin-user
+#     passwordKey: admin-password
 adminUser: admin
-adminPassword: changeme   # replace before deploying
+adminPassword: changeme   # override before deploying to a shared cluster
+
+# ─── Consul sidecar injection — opt out ──────────────────────────────────────
+# Consul's mutating webhook has namespaceSelector: {} and objectSelector: {},
+# meaning it injects sidecars into every pod by default. The injected seccomp
+# annotations (container.seccomp.security.alpha.kubernetes.io/*) violate ROSA's
+# SCC policy and prevent pods from starting. Setting connect-inject: "false"
+# on the pod template tells the webhook to skip this pod entirely.
+podAnnotations:
+  consul.hashicorp.com/connect-inject: "false"
+
+# ─── ROSA SCC compatibility ───────────────────────────────────────────────────
+# Grafana's chart defaults to runAsUser/fsGroup 472, which falls outside ROSA's
+# allowed UID range for the namespace under restricted-v2 SCC. The anyuid SCC
+# (granted above) allows fixed UIDs like 472.
+#
+# initChownData runs as root (UID 0) with CHOWN capability to fix PVC ownership.
+# anyuid blocks added capabilities, so disable this init container — Grafana
+# handles missing ownership gracefully when persistence is enabled.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  runAsGroup: 472
+  fsGroup: 472
+
+# Disable the root init container that fixes PVC file ownership.
+# anyuid SCC does not allow added capabilities (CHOWN), so this must be false.
+initChownData:
+  enabled: false
+
+# ─── Datasources ──────────────────────────────────────────────────────────────
+# Grafana provisions datasources from this config at startup via a ConfigMap.
+# The Tempo datasource points at the query-frontend service in the tempo
+# namespace, which is the single entry point for all trace queries.
+#
+# serviceMap.datasourceUid and lokiSearch.datasourceUid are optional — they
+# enable cross-datasource linking (trace → metrics, trace → logs). Remove or
+# update these if Prometheus/Loki are not deployed.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
+        access: proxy   # Grafana backend proxies requests — never exposes Tempo directly
+        isDefault: true
+        jsonData:
+          httpMethod: GET
+          serviceMap:
+            datasourceUid: prometheus  # link trace service graph → Prometheus metrics
+          nodeGraph:
+            enabled: true              # show trace dependency graph in explore
+          search:
+            hide: false
+          lokiSearch:
+            datasourceUid: loki        # link traces → Loki logs
+          traceQuery:
+            timeShiftEnabled: true
+            spanStartTimeShift: 1h     # expand log/metric query window around a trace
+            spanEndTimeShift: -1h
+
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        access: proxy
+        jsonData:
+          httpMethod: POST
+          exemplarTraceIdDestinations:
+            # Link Prometheus exemplars → Tempo traces
+            - name: traceID
+              datasourceUid: tempo
+
+      - name: Loki
+        type: loki
+        uid: loki
+        url: http://loki-loki-distributed-gateway.loki.svc.cluster.local
+        access: proxy
+        jsonData:
+          derivedFields:
+            # Link Loki log lines containing a traceID → Tempo traces
+            - name: traceID
+              matcherRegex: "traceID=(\\w+)"
+              url: "$${__value.raw}"
+              datasourceUid: tempo
 
 # ─── Persistence ──────────────────────────────────────────────────────────────
+# Stores dashboards, preferences, and other state in a PVC. Without this,
+# everything is lost on pod restart.
 persistence:
   enabled: true
   size: 5Gi
-  # storageClassName: ""  # leave blank to use cluster default
 
-# ─── Datasource sidecar ───────────────────────────────────────────────────────
-# Watches for ConfigMaps labelled grafana_datasource=1 in the same namespace
-# and hot-loads them as datasources — no Grafana restart required.
-# grafana-tempo-datasource.yaml depends on this being enabled.
-sidecar:
-  datasources:
-    enabled: true
-    label: grafana_datasource
-    labelValue: "1"
-  dashboards:
-    enabled: true
-    label: grafana_dashboard
-    labelValue: "1"
-
-# ─── OpenShift Route exposure ─────────────────────────────────────────────────
-# Creates an OpenShift Route for the Grafana UI.
-grafana.ini:
-  server:
-    root_url: "%(protocol)s://%(domain)s/"
-    serve_from_sub_path: false
-
-# Expose via a ClusterIP Service; the Route below handles external access.
+# ─── Service ──────────────────────────────────────────────────────────────────
+# ClusterIP keeps Grafana internal. To expose externally either:
+#   - Change to type: LoadBalancer, or
+#   - Create an OpenShift Route (recommended on ROSA):
+#       oc expose service grafana --namespace grafana
 service:
   type: ClusterIP
   port: 80
-  targetPort: 3000
 
-# ─── OpenShift Route ──────────────────────────────────────────────────────────
-# The Grafana Helm chart does not natively create OpenShift Routes.
-# After installing, create the Route manually:
-#
-#   oc expose svc/grafana -n monitoring \
-#     --hostname=grafana.apps.<your-cluster-domain>
-#
-# Or apply deploy/observability/grafana-route.yaml (provided separately).
-
-# ─── Resource requests ────────────────────────────────────────────────────────
+# ─── Resources ────────────────────────────────────────────────────────────────
 resources:
   requests:
     cpu: 100m
@@ -67,17 +136,3 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
-
-# ─── Security context (required for OpenShift) ───────────────────────────────
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 472
-  fsGroup: 472
-
-containerSecurityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-      - ALL
-  readOnlyRootFilesystem: false
-  runAsNonRoot: true

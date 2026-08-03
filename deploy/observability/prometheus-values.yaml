@@ -1,4 +1,4 @@
-# Prometheus (kube-prometheus-stack) — Helm values for standalone deployment on OpenShift
+# Prometheus (kube-prometheus-stack) — Helm values for ROSA deployment
 #
 # The kube-prometheus-stack chart bundles Prometheus, Alertmanager, and the
 # Prometheus Operator in one release. It is the recommended approach for
@@ -8,6 +8,16 @@
 #   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 #   helm repo update
 #   kubectl create namespace monitoring
+#   oc adm policy add-scc-to-user anyuid \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-prometheus \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-operator \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-admission \
+#     system:serviceaccount:monitoring:default
+#   oc adm policy add-scc-to-user privileged \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-prometheus \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-operator \
+#     system:serviceaccount:monitoring:prometheus-kube-prometheus-admission \
+#     system:serviceaccount:monitoring:default
 #   helm install prometheus prometheus-community/kube-prometheus-stack \
 #       --namespace monitoring \
 #       --values deploy/observability/prometheus-values.yaml
@@ -41,8 +51,18 @@ kubeProxy:
 grafana:
   enabled: false
 
+# ─── Consul sidecar injection — opt out ──────────────────────────────────────
+# Consul's mutating webhook injects sidecars into every pod by default.
+# The sre-podimagespec-mutation webhook also adds seccomp annotations cluster-wide.
+# Both cause SCC violations on ROSA. Opt out at the pod level here and grant
+# privileged SCC (see install commands above) to allow the seccomp annotations.
+commonLabels: {}  # placeholder — podAnnotations are set per-component below
+
 # ─── Prometheus ───────────────────────────────────────────────────────────────
 prometheus:
+  # Opt out of Consul sidecar injection on Prometheus pods
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
   prometheusSpec:
     # Watch ServiceMonitors in all namespaces (including tracing-demo).
     # Narrow this if you want tighter scope.
@@ -54,6 +74,9 @@ prometheus:
     podMonitorSelector: {}
 
     retention: 15d
+
+    # Accept remote_write from Tempo metrics-generator
+    enableRemoteWriteReceiver: true
 
     resources:
       requests:
@@ -71,7 +94,8 @@ prometheus:
             requests:
               storage: 20Gi
 
-    # OpenShift security: Prometheus runs as non-root
+    # ROSA: runAsUser/fsGroup 65534 is outside the namespace UID range.
+    # anyuid SCC (granted above) allows this fixed UID.
     securityContext:
       runAsNonRoot: true
       runAsUser: 65534
@@ -83,6 +107,9 @@ alertmanager:
 
 # ─── Prometheus Operator ──────────────────────────────────────────────────────
 prometheusOperator:
+  # Opt out of Consul sidecar injection on the operator pod
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
   admissionWebhooks:
     enabled: true
   securityContext:

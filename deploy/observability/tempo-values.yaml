@@ -41,8 +41,8 @@
 #            }]
 #          }
 #     3. Create an IAM role with a trust policy scoped to the Tempo service accounts
-#        (distributor, ingester, querier, compactor) and attach the policy above.
-#     4. Annotate the Tempo service accounts in your override values:
+#        and attach the policy above.
+#     4. Annotate the Tempo service account in your override values:
 #          serviceAccount:
 #            annotations:
 #              eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<role-name>
@@ -62,104 +62,138 @@
 # See deploy/observability/README.md for the full S3 setup walkthrough.
 # ─────────────────────────────────────────────────────────────────────────────
 
-tempo-distributed:
-  # ─── Global ──────────────────────────────────────────────────────────────
-  global:
-    clusterDomain: cluster.local
+# ─── Global ──────────────────────────────────────────────────────────────────
+global:
+  clusterDomain: cluster.local
 
-  # ─── Object Storage ───────────────────────────────────────────────────────
-  storage:
-    trace:
-      backend: s3
-      s3:
-        bucket: <your-bucket-name>          # e.g. tempo-traces-myorg-prod
-        endpoint: s3.<your-region>.amazonaws.com  # e.g. s3.us-east-1.amazonaws.com
-        region: <your-region>               # e.g. us-east-1
+# ─── Service Account (IRSA) ───────────────────────────────────────────────────
+# The chart creates a single shared SA named "tempo". Annotate it here.
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::422772905643:role/tempo
 
-        # OPTION A (IRSA) — leave these unset; credentials come from the IAM role.
-        # access_key:
-        # secret_key:
+# ─── Object Storage ───────────────────────────────────────────────────────────
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-demo-1
+      endpoint: s3.us-east-2.amazonaws.com
+      region: us-east-2
 
-        # OPTION B (static credentials) — reference the Secret created above.
-        # access_key: ${AWS_ACCESS_KEY_ID}
-        # secret_key: ${AWS_SECRET_ACCESS_KEY}
+      # OPTION A (IRSA) — leave these unset; credentials come from the IAM role.
+      # access_key:
+      # secret_key:
 
-  # OPTION B only — inject the Secret as environment variables into every
-  # Tempo component that reads from or writes to S3. Uncomment all four blocks.
-  #
-  # distributor:
-  #   extraEnvFrom:
-  #     - secretRef:
-  #         name: tempo-s3-credentials
-  # ingester:
-  #   extraEnvFrom:
-  #     - secretRef:
-  #         name: tempo-s3-credentials
-  # querier:
-  #   extraEnvFrom:
-  #     - secretRef:
-  #         name: tempo-s3-credentials
-  # compactor:
-  #   extraEnvFrom:
-  #     - secretRef:
-  #         name: tempo-s3-credentials
+      # OPTION B (static credentials) — reference the Secret created above.
+      # access_key: ${AWS_ACCESS_KEY_ID}
+      # secret_key: ${AWS_SECRET_ACCESS_KEY}
 
-  # ─── Receivers ────────────────────────────────────────────────────────────
-  distributor:
-    replicas: 2
-    config:
-      receivers:
-        otlp:
-          protocols:
-            grpc:
-              endpoint: "0.0.0.0:4317"
-            http:
-              endpoint: "0.0.0.0:4318"
+# OPTION B only — inject the Secret as environment variables into every
+# Tempo component that reads from or writes to S3. Uncomment all four blocks.
+#
+# distributor:
+#   extraEnvFrom:
+#     - secretRef:
+#         name: tempo-s3-credentials
+# ingester:
+#   extraEnvFrom:
+#     - secretRef:
+#         name: tempo-s3-credentials
+# querier:
+#   extraEnvFrom:
+#     - secretRef:
+#         name: tempo-s3-credentials
+# compactor:
+#   extraEnvFrom:
+#     - secretRef:
+#         name: tempo-s3-credentials
 
-  ingester:
-    replicas: 3
-    config:
-      replication_factor: 3
-    persistence:
+# ─── Tempo config (retention) ─────────────────────────────────────────────────
+# The chart expects `config` as a raw YAML string, not a map. Set retention via
+# the structured chart key instead.
+tempo:
+  retention: 720h  # 30 days
+
+# ─── Receivers ────────────────────────────────────────────────────────────────
+# ─── Trace receivers ──────────────────────────────────────────────────────────
+# Enable OTLP receivers on the distributor. The chart uses a top-level `traces`
+# key to toggle protocols — this sets the receiver to listen on 0.0.0.0 and
+# adds the ports to the distributor service automatically.
+traces:
+  otlp:
+    grpc:
       enabled: true
-      size: 10Gi
+      receiverConfig:
+        endpoint: "0.0.0.0:4317"
+    http:
+      enabled: true
+      receiverConfig:
+        endpoint: "0.0.0.0:4318"
 
-  querier:
-    replicas: 2
+distributor:
+  replicas: 2
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
 
-  queryFrontend:
-    replicas: 2
-
-  compactor:
-    replicas: 1
-
-  # ─── Retention ────────────────────────────────────────────────────────────
+ingester:
+  replicas: 3
   config:
-    compactor:
-      compaction:
-        block_retention: 720h  # 30 days
-
-  # ─── Tracing-level search ─────────────────────────────────────────────────
-  search:
+    replication_factor: 3
+  persistence:
     enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
 
-  # ─── Resource requests (tune for your cluster) ────────────────────────────
-  ingester:
-    resources:
-      requests:
-        cpu: 500m
-        memory: 1Gi
-      limits:
-        cpu: "2"
-        memory: 4Gi
+querier:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
 
-  querier:
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
+queryFrontend:
+  replicas: 2
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
 
-  # ─── ServiceMonitor for Prometheus scraping ───────────────────────────────
-  serviceMonitor:
-    enabled: true
-    interval: 30s
+compactor:
+  replicas: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Metrics Generator ────────────────────────────────────────────────────────
+# Optional component that derives RED metrics (rate/error/duration) from traces
+# and remote-writes them to Prometheus. Powers the service graph and span rate
+# charts in Grafana's Traces Drilldown view.
+metricsGenerator:
+  enabled: true
+  replicas: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+  config:
+    storage:
+      path: /var/tempo/wal
+      remote_write:
+        - url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+          send_exemplars: true
+
+memcached:
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── ServiceMonitor for Prometheus scraping ───────────────────────────────────
+serviceMonitor:
+  enabled: true
+  interval: 30s

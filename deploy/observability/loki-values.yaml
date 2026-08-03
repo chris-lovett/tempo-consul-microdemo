@@ -1,0 +1,153 @@
+# Grafana Loki (loki-distributed) — Helm values for ROSA deployment
+# Deploys Loki in microservices mode backed by S3-compatible object storage.
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace loki
+#
+#   # Create S3 bucket for Loki chunks and ruler storage:
+#   aws s3api create-bucket \
+#     --bucket loki-demo-chrislovett-1 \
+#     --region us-east-2 \
+#     --create-bucket-configuration LocationConstraint=us-east-2
+#
+#   # Create IAM policy (same permissions as Tempo):
+#   aws iam create-policy \
+#     --policy-name loki-s3-policy \
+#     --policy-document '{
+#       "Version":"2012-10-17",
+#       "Statement":[{"Effect":"Allow","Action":
+#         ["s3:PutObject","s3:GetObject","s3:DeleteObject","s3:ListBucket"],
+#         "Resource":["arn:aws:s3:::loki-demo-chrislovett-1","arn:aws:s3:::loki-demo-chrislovett-1/*"]}]}'
+#
+#   # Create IAM role with ROSA OIDC trust (same pattern as Tempo):
+#   # Trust policy principal: arn:aws:iam::422772905643:oidc-provider/oidc.op1.openshiftapps.com/2pa8d7pg05a236at2mnktjscdpe1biav
+#   # Condition sub: system:serviceaccount:loki:*
+#   aws iam create-role --role-name loki \
+#     --assume-role-policy-document file://loki-trust-policy.json
+#   aws iam attach-role-policy --role-name loki \
+#     --policy-arn arn:aws:iam::422772905643:policy/loki-s3-policy
+#
+#   # Grant SCCs for ROSA compatibility:
+#   oc adm policy add-scc-to-user anyuid \
+#     system:serviceaccount:loki:loki-loki-distributed \
+#     system:serviceaccount:loki:default
+#   oc adm policy add-scc-to-user privileged \
+#     system:serviceaccount:loki:loki-loki-distributed \
+#     system:serviceaccount:loki:default
+#
+#   # Label namespace to exclude Consul webhook:
+#   kubectl label namespace loki consul.hashicorp.com/connect-inject=false
+#
+#   helm install loki grafana/loki-distributed \
+#       --namespace loki \
+#       --values deploy/observability/loki-values.yaml
+#
+# Reference: https://grafana.com/docs/loki/latest/setup/install/helm/install-microservices/
+
+# ─── Global ───────────────────────────────────────────────────────────────────
+global:
+  clusterDomain: cluster.local
+
+# ─── Service Account (IRSA) ───────────────────────────────────────────────────
+# Annotate the Loki service account with the IAM role ARN so pods can assume
+# it via ROSA's OIDC provider — no static credentials needed.
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::422772905643:role/loki
+
+# ─── Loki structured config ───────────────────────────────────────────────────
+# structuredConfig takes precedence over loki.config and loki.storageConfig.
+# Configures S3 as the object store for chunks and the ruler.
+loki:
+  structuredConfig:
+    auth_enabled: false   # single-tenant mode; set true for multi-tenant
+
+    common:
+      replication_factor: 1
+
+    storage_config:
+      aws:
+        s3: s3://us-east-2/loki-demo-chrislovett-1
+        region: us-east-2
+      boltdb_shipper:
+        shared_store: s3
+        active_index_directory: /var/loki/index
+        cache_location: /var/loki/cache
+        cache_ttl: 168h
+
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: boltdb-shipper
+          object_store: s3
+          schema: v12
+          index:
+            prefix: loki_index_
+            period: 24h
+
+    compactor:
+      working_directory: /var/loki/compactor
+      shared_store: s3
+      retention_enabled: true
+
+    limits_config:
+      retention_period: 720h   # 30 days
+
+# ─── Consul sidecar injection — opt out ──────────────────────────────────────
+# The sre-podimagespec-mutation and consul-connect-injector webhooks both fire
+# on every pod. Opt out at the pod level on each component.
+
+# ─── Distributor ──────────────────────────────────────────────────────────────
+distributor:
+  replicas: 2
+  maxUnavailable: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Ingester ─────────────────────────────────────────────────────────────────
+ingester:
+  replicas: 2
+  maxUnavailable: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Querier ──────────────────────────────────────────────────────────────────
+querier:
+  replicas: 2
+  maxUnavailable: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Query Frontend ───────────────────────────────────────────────────────────
+queryFrontend:
+  replicas: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Compactor ────────────────────────────────────────────────────────────────
+compactor:
+  enabled: true
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+
+# ─── Gateway (nginx) ──────────────────────────────────────────────────────────
+# Single entry point for push (3100) and query (3100) traffic.
+# On OpenShift/ROSA the DNS resolver is in openshift-dns, not kube-system.
+gateway:
+  enabled: true
+  replicas: 1
+  podAnnotations:
+    consul.hashicorp.com/connect-inject: "false"
+  nginxConfig:
+    resolver: dns-default.openshift-dns.svc.cluster.local
+
+# ─── ServiceMonitor for Prometheus scraping ───────────────────────────────────
+serviceMonitor:
+  enabled: true
+  interval: 30s
