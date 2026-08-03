@@ -11,24 +11,98 @@
 #       --values deploy/observability/tempo-values.yaml
 #
 # Reference: https://grafana.com/docs/tempo/latest/setup/helm-chart/
+#
+# ── AWS S3 setup ──────────────────────────────────────────────────────────────
+# Before deploying, you need an S3 bucket and credentials. Two approaches:
+#
+# OPTION A — IRSA (IAM Roles for Service Accounts) — RECOMMENDED for ROSA/EKS
+#   No static credentials. Tempo pods assume an IAM role via a Kubernetes
+#   ServiceAccount annotation. Steps:
+#     1. Create an S3 bucket (versioning not required, no public access):
+#          aws s3api create-bucket \
+#            --bucket <your-bucket-name> \
+#            --region <your-region> \
+#            --create-bucket-configuration LocationConstraint=<your-region>
+#     2. Create an IAM policy (minimum required permissions):
+#          {
+#            "Version": "2012-10-17",
+#            "Statement": [{
+#              "Effect": "Allow",
+#              "Action": [
+#                "s3:PutObject",
+#                "s3:GetObject",
+#                "s3:DeleteObject",
+#                "s3:ListBucket"
+#              ],
+#              "Resource": [
+#                "arn:aws:s3:::<your-bucket-name>",
+#                "arn:aws:s3:::<your-bucket-name>/*"
+#              ]
+#            }]
+#          }
+#     3. Create an IAM role with a trust policy scoped to the Tempo service accounts
+#        (distributor, ingester, querier, compactor) and attach the policy above.
+#     4. Annotate the Tempo service accounts in your override values:
+#          serviceAccount:
+#            annotations:
+#              eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<role-name>
+#     5. Leave access_key and secret_key unset — the AWS SDK picks up the role automatically.
+#
+# OPTION B — Static credentials via Kubernetes Secret
+#   Less preferred. Use only if IRSA is not available.
+#     1. Create the secret (do NOT commit credentials to git):
+#          kubectl create secret generic tempo-s3-credentials \
+#            --from-literal=AWS_ACCESS_KEY_ID=<your-access-key> \
+#            --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret-key> \
+#            --namespace tempo
+#     2. Reference it in extraEnvFrom on each Tempo component (see commented
+#        extraEnvFrom block in the storage section below).
+#     3. Set access_key and secret_key to the env var references shown below.
+#
+# See deploy/observability/README.md for the full S3 setup walkthrough.
+# ─────────────────────────────────────────────────────────────────────────────
 
 tempo-distributed:
   # ─── Global ──────────────────────────────────────────────────────────────
   global:
     clusterDomain: cluster.local
 
-  # ─── Object Storage (S3 example — adjust for GCS, Azure, or MinIO) ───────
+  # ─── Object Storage ───────────────────────────────────────────────────────
   storage:
     trace:
       backend: s3
       s3:
-        bucket: tempo-traces          # replace with your bucket name
-        endpoint: s3.amazonaws.com
-        region: us-east-1
-        # Use IAM role / workload identity rather than static credentials where possible.
-        # access_key and secret_key can be injected via a Kubernetes Secret:
-        #   access_key: ${AWS_ACCESS_KEY_ID}
-        #   secret_key: ${AWS_SECRET_ACCESS_KEY}
+        bucket: <your-bucket-name>          # e.g. tempo-traces-myorg-prod
+        endpoint: s3.<your-region>.amazonaws.com  # e.g. s3.us-east-1.amazonaws.com
+        region: <your-region>               # e.g. us-east-1
+
+        # OPTION A (IRSA) — leave these unset; credentials come from the IAM role.
+        # access_key:
+        # secret_key:
+
+        # OPTION B (static credentials) — reference the Secret created above.
+        # access_key: ${AWS_ACCESS_KEY_ID}
+        # secret_key: ${AWS_SECRET_ACCESS_KEY}
+
+  # OPTION B only — inject the Secret as environment variables into every
+  # Tempo component that reads from or writes to S3. Uncomment all four blocks.
+  #
+  # distributor:
+  #   extraEnvFrom:
+  #     - secretRef:
+  #         name: tempo-s3-credentials
+  # ingester:
+  #   extraEnvFrom:
+  #     - secretRef:
+  #         name: tempo-s3-credentials
+  # querier:
+  #   extraEnvFrom:
+  #     - secretRef:
+  #         name: tempo-s3-credentials
+  # compactor:
+  #   extraEnvFrom:
+  #     - secretRef:
+  #         name: tempo-s3-credentials
 
   # ─── Receivers ────────────────────────────────────────────────────────────
   distributor:

@@ -133,6 +133,112 @@ helm get values <grafana-release> -n <grafana-namespace> | grep -A5 sidecar
 
 ---
 
+## Step 1b — Set up AWS S3 for Tempo storage
+
+Tempo requires object storage for trace persistence. Complete this before
+deploying Tempo in Step 2.
+
+### Create the S3 bucket
+
+```bash
+# Replace placeholders with your values
+export BUCKET_NAME=tempo-traces-myorg-prod
+export REGION=us-east-1
+
+aws s3api create-bucket \
+  --bucket ${BUCKET_NAME} \
+  --region ${REGION} \
+  --create-bucket-configuration LocationConstraint=${REGION}
+
+# Block all public access
+aws s3api put-public-access-block \
+  --bucket ${BUCKET_NAME} \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+```
+
+### Required IAM permissions
+
+Tempo needs these S3 actions on the bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+      "s3:ListBucket"
+    ],
+    "Resource": [
+      "arn:aws:s3:::${BUCKET_NAME}",
+      "arn:aws:s3:::${BUCKET_NAME}/*"
+    ]
+  }]
+}
+```
+
+### Option A — IRSA (recommended for ROSA / EKS)
+
+IRSA lets Tempo pods assume an IAM role without storing any credentials in the
+cluster. This is the preferred approach.
+
+```bash
+# 1. Create the IAM policy
+aws iam create-policy \
+  --policy-name TempoS3Policy \
+  --policy-document file://tempo-iam-policy.json   # save the JSON above to this file
+
+# 2. Create an IAM role with a trust policy for the Tempo service accounts.
+#    On ROSA, use the rosa CLI or the AWS console to create the role and
+#    associate it with the cluster's OIDC provider:
+#      Principal: arn:aws:iam::<account-id>:oidc-provider/<oidc-provider-url>
+#      Condition StringEquals:
+#        <oidc-provider-url>:sub:
+#          - system:serviceaccount:tempo:tempo-distributor
+#          - system:serviceaccount:tempo:tempo-ingester
+#          - system:serviceaccount:tempo:tempo-querier
+#          - system:serviceaccount:tempo:tempo-compactor
+
+# 3. Attach the policy to the role
+aws iam attach-role-policy \
+  --role-name TempoS3Role \
+  --policy-arn arn:aws:iam::<account-id>:policy/TempoS3Policy
+
+# 4. Annotate each Tempo service account with the role ARN.
+#    Add this to tempo-values.yaml under each component, e.g.:
+#
+#      distributor:
+#        serviceAccount:
+#          annotations:
+#            eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/TempoS3Role
+#
+#    (repeat for ingester, querier, compactor)
+```
+
+With IRSA configured, leave `access_key` and `secret_key` **unset** in
+`tempo-values.yaml` — the AWS SDK picks up the role automatically.
+
+### Option B — Static credentials via Kubernetes Secret
+
+Use this only if IRSA is not available on your cluster.
+
+```bash
+# Create the secret — do NOT commit credentials to git
+kubectl create secret generic tempo-s3-credentials \
+  --from-literal=AWS_ACCESS_KEY_ID=<your-access-key-id> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret-access-key> \
+  --namespace tempo
+```
+
+Then in `tempo-values.yaml`:
+1. Set `access_key: ${AWS_ACCESS_KEY_ID}` and `secret_key: ${AWS_SECRET_ACCESS_KEY}` under `storage.trace.s3`
+2. Uncomment the four `extraEnvFrom` blocks in the file to mount the Secret into each Tempo component
+
+---
+
 ## Step 2 — Deploy Grafana Tempo
 
 Edit `tempo-values.yaml` first — set your S3 bucket, endpoint, and region (or switch to GCS/MinIO).
