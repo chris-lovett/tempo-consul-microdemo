@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-loki
+  # Must be the same namespace as your Grafana deployment.
+  namespace: grafana
+  labels:
+    grafana_datasource: "1"
+data:
+  loki-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki-loki-distributed-gateway.loki.svc.cluster.local
+        isDefault: false
+        version: 1
+        editable: true
+        jsonData:
+          derivedFields:
+            - name: traceID
+              matcherRegex: "traceID=(\\w+)"
+              url: "$${__value.raw}"
+              datasourceUid: tempo

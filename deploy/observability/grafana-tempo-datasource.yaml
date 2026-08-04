@@ -16,7 +16,7 @@
 # Find your Grafana namespace and release name:
 #   helm list -A | grep grafana
 #
-# Apply (replace <grafana-namespace> with your actual namespace, e.g. monitoring):
+# Apply (replace <grafana-namespace> with your actual namespace, e.g. grafana):
 #   kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml \
 #     -n <grafana-namespace>
 #
@@ -32,8 +32,8 @@ kind: ConfigMap
 metadata:
   name: grafana-datasource-tempo
   # Must be the same namespace as your Grafana deployment.
-  # Replace with your actual Grafana namespace (e.g. monitoring, observability).
-  namespace: monitoring
+  # Replace with your actual Grafana namespace (default: grafana).
+  namespace: grafana
   labels:
     # This label triggers the Grafana sidecar to load this datasource.
     grafana_datasource: "1"

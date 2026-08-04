@@ -7,24 +7,24 @@
 # Install:
 #   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 #   helm repo update
-#   kubectl create namespace monitoring
+#   kubectl create namespace prometheus
 #   oc adm policy add-scc-to-user anyuid \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-prometheus \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-operator \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-admission \
-#     system:serviceaccount:monitoring:default
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-prometheus \
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-operator \
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-admission \
+#     system:serviceaccount:prometheus:default
 #   oc adm policy add-scc-to-user privileged \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-prometheus \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-operator \
-#     system:serviceaccount:monitoring:prometheus-kube-prometheus-admission \
-#     system:serviceaccount:monitoring:default
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-prometheus \
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-operator \
+#     system:serviceaccount:prometheus:prometheus-kube-prometheus-admission \
+#     system:serviceaccount:prometheus:default
 #   helm install prometheus prometheus-community/kube-prometheus-stack \
-#       --namespace monitoring \
+#       --namespace prometheus \
 #       --values deploy/observability/prometheus-values.yaml
 #
 # Upgrade after changes:
 #   helm upgrade prometheus prometheus-community/kube-prometheus-stack \
-#       --namespace monitoring \
+#       --namespace prometheus \
 #       --values deploy/observability/prometheus-values.yaml
 
 # ─── Scope: disable components already handled by OpenShift ──────────────────

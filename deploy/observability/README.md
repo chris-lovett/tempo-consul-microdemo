@@ -5,7 +5,10 @@ on OpenShift and wire it into this demo, starting from scratch.
 
 **Target environment:**
 - OpenShift 4.12+ cluster with Consul Service Mesh installed
-- `monitoring` namespace used for Grafana and Prometheus (adjust as needed)
+- `grafana` namespace used for Grafana
+- `prometheus` namespace used for Prometheus
+- `tempo` namespace used for Grafana Tempo
+- Adjust these namespaces as needed if your cluster uses different names
 
 ---
 
@@ -36,10 +39,10 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm repo update
 ```
 
-### 0b — Create the monitoring namespace
+### 0b — Create the Prometheus namespace
 
 ```bash
-kubectl create namespace monitoring
+kubectl create namespace prometheus
 ```
 
 ### 0c — Deploy Prometheus (kube-prometheus-stack)
@@ -51,11 +54,11 @@ scrapers) to avoid conflicts.
 
 ```bash
 helm install prometheus prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
+  --namespace prometheus \
   --values prometheus-values.yaml
 
 # Wait for the operator and Prometheus pods to be ready
-kubectl get pods -n monitoring -w
+kubectl get pods -n prometheus -w
 ```
 
 Key settings in [`prometheus-values.yaml`](prometheus-values.yaml):
@@ -67,11 +70,11 @@ Key settings in [`prometheus-values.yaml`](prometheus-values.yaml):
 
 ```bash
 helm install grafana grafana/grafana \
-  --namespace monitoring \
+  --namespace grafana \
   --values grafana-values.yaml
 
 # Wait for the Grafana pod to be ready
-kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana -w
+kubectl get pods -n grafana -l app.kubernetes.io/name=grafana -w
 ```
 
 Key settings in [`grafana-values.yaml`](grafana-values.yaml):
@@ -86,13 +89,13 @@ The Grafana Helm chart does not create OpenShift Routes natively. Apply the
 provided Route manifest:
 
 ```bash
-kubectl apply -f grafana-route.yaml -n monitoring
+kubectl apply -f grafana-route.yaml -n grafana
 ```
 
 Get the Grafana URL:
 
 ```bash
-oc get route grafana -n monitoring -o jsonpath='{.spec.host}'
+oc get route grafana -n grafana -o jsonpath='{.spec.host}'
 # Open: https://<output>
 # Default credentials: admin / changeme  (set in grafana-values.yaml — change before prod use)
 ```
@@ -104,7 +107,7 @@ Add it as a datasource in Grafana:
 
 1. Open Grafana → **Administration → Data sources → Add new datasource**
 2. Select **Prometheus**
-3. URL: `http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090`
+3. URL: `http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090`
 4. Click **Save & test**
 5. Copy the datasource **UID** from the URL bar — you will need it in Step 3 below
    (it looks like `ae3f1234-...`, or may simply be `prometheus`)
@@ -120,8 +123,8 @@ Before applying anything, collect the values you'll need to substitute below:
 helm list -A | grep -E 'grafana|prometheus'
 
 # Example output:
-#   grafana      monitoring   grafana/grafana      ...
-#   prometheus   monitoring   prometheus-community/kube-prometheus-stack ...
+#   grafana      grafana      grafana/grafana      ...
+#   prometheus   prometheus   prometheus-community/kube-prometheus-stack ...
 
 # Check whether the Grafana sidecar datasource loader is enabled
 helm get values <grafana-release> -n <grafana-namespace> | grep -A5 sidecar
@@ -259,7 +262,7 @@ kubectl get pods -n tempo -w
 ## Step 3 — Register Tempo as a Grafana datasource
 
 Edit `grafana-tempo-datasource.yaml`:
-1. Set `metadata.namespace` to your Grafana namespace (e.g. `monitoring`)
+1. Set `metadata.namespace` to your Grafana namespace (e.g. `grafana`)
 2. Set `datasourceUid: prometheus` to match the actual UID of your existing Prometheus datasource
 
 ```bash
