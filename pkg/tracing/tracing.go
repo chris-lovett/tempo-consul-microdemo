@@ -13,6 +13,7 @@ package tracing
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -130,6 +131,27 @@ func SpanFromContext(r *http.Request) trace.Span {
 // Tag adds a string attribute to span.
 func Tag(span trace.Span, key, value string) {
 	span.SetAttributes(attribute.String(key, value))
+}
+
+// SpanLog emits a structured log line containing the active traceID and spanID
+// extracted from ctx. The format is:
+//
+//	level=INFO traceID=<hex> spanID=<hex> msg=<message> [key=value ...]
+//
+// Alloy tails this from stdout and Loki's derivedFields regex matches "traceID=(\w+)"
+// to create a clickable link from any log line directly to the Tempo trace.
+//
+// Usage:
+//
+//	tracing.SpanLog(r.Context(), "INFO", "checkout started", "user.id", userID)
+func SpanLog(ctx context.Context, level, msg string, kvs ...string) {
+	sc := trace.SpanFromContext(ctx).SpanContext()
+	line := fmt.Sprintf("level=%s traceID=%s spanID=%s msg=%q",
+		level, sc.TraceID().String(), sc.SpanID().String(), msg)
+	for i := 0; i+1 < len(kvs); i += 2 {
+		line += fmt.Sprintf(" %s=%q", kvs[i], kvs[i+1])
+	}
+	log.Print(line)
 }
 
 // SetError marks span as errored and records the message.

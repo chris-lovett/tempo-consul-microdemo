@@ -46,8 +46,6 @@ This repo is the production successor to [`zipkin-otel-microdemo`](https://githu
           └── W3C traceparent propagated through Envoy sidecars
 ```
 
-### Enterprise-grade architecture
-
 All six Go services share a single [`pkg/tracing`](pkg/tracing/tracing.go) package that initializes the OpenTelemetry SDK and exports spans via OTLP/gRPC. Traces are not sent directly to Tempo; they are ingested by a dedicated OTel Collector instead.
 
 The OTel Collector runs as a separate pod in the application namespace and serves as the primary aggregation and export point for tracing traffic. It:

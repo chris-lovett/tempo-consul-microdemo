@@ -20,6 +20,8 @@ on OpenShift and wire it into this demo, starting from scratch.
 | `grafana-route.yaml` | OpenShift Route to expose the Grafana UI externally |
 | `prometheus-values.yaml` | Helm values for deploying standalone Prometheus (kube-prometheus-stack) |
 | `tempo-values.yaml` | Helm values for deploying Grafana Tempo (microservices mode, S3 backend) |
+| `loki-values.yaml` | Helm values for deploying Grafana Loki (microservices mode, S3 backend) |
+| `alloy-values.yaml` | Helm values for deploying Grafana Alloy (DaemonSet log collector → Loki) |
 | `grafana-tempo-datasource.yaml` | ConfigMap that provisions the Tempo datasource into Grafana |
 | `grafana-loki-datasource.yaml` | ConfigMap that provisions the Loki datasource into Grafana |
 | `servicemonitor-otel-collector.yaml` | Tells Prometheus to scrape the OTel Collector |
@@ -348,6 +350,78 @@ to point at your Grafana instance, then:
 helm upgrade consul hashicorp/consul -n consul \
   -f <your-existing-consul-values.yaml> \
   -f consul-values-observability.yaml
+```
+
+---
+
+## Step 7 — Deploy Grafana Alloy (log collection → trace/log correlation)
+
+Alloy is the log collector. It runs as a DaemonSet, tails every pod's stdout/stderr
+via `/var/log/pods` on each node, and pushes labelled log streams to the Loki gateway.
+Once deployed, any log line emitted by a service via `tracing.SpanLog()` will contain
+a `traceID=<hex>` field. Loki's `derivedFields` regex extracts this and renders it as
+a one-click link from any log line directly to the corresponding Tempo trace.
+
+### 7a — Create the namespace and grant SCCs
+
+Alloy needs to read host paths (`/var/log/pods`). The `privileged` SCC is required
+on ROSA to allow mounting the node filesystem.
+
+```bash
+kubectl create namespace alloy
+
+# Exclude Consul sidecar injection for the alloy namespace
+kubectl label namespace alloy consul.hashicorp.com/connect-inject=false
+
+# Grant privileged SCC so Alloy can read /var/log/pods on each node
+oc adm policy add-scc-to-user privileged \
+  system:serviceaccount:alloy:alloy
+```
+
+### 7b — Install Alloy
+
+```bash
+helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
+
+helm install alloy grafana/alloy \
+  --namespace alloy \
+  --values deploy/observability/alloy-values.yaml
+
+# Confirm one Alloy pod is Running on each node
+kubectl get pods -n alloy -o wide -w
+```
+
+### 7c — Verify logs are reaching Loki
+
+Allow ~60 seconds for Alloy to begin shipping logs, then run a quick LogQL query
+against Loki directly to confirm streams are arriving:
+
+```bash
+# Port-forward the Loki gateway
+kubectl port-forward -n loki svc/loki-loki-distributed-gateway 3100:80 &
+
+# Query for any log stream from the tracing-demo namespace
+curl -s 'http://localhost:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={namespace="tracing-demo"}' \
+  --data-urlencode 'limit=5' | jq '.data.result[].values[0][1]'
+```
+
+You should see log lines from the demo services. Lines emitted via `tracing.SpanLog()`
+will contain the `traceID=` field used by Grafana's correlation link.
+
+### 7d — Verify the trace→log link in Grafana
+
+1. Open Grafana → **Explore** → select the **Loki** datasource
+2. Run: `{namespace="tracing-demo"} |= "traceID"`
+3. Expand any log line — the `traceID` field renders as a **Tempo** button
+4. Click it — Grafana opens the full distributed trace waterfall for that request
+
+### Upgrading Alloy after config changes
+
+```bash
+helm upgrade alloy grafana/alloy \
+  --namespace alloy \
+  --values deploy/observability/alloy-values.yaml
 ```
 
 ---

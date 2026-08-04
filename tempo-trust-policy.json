@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::422772905643:oidc-provider/oidc.op1.openshiftapps.com/2pa8d7pg05a236at2mnktjscdpe1biav"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringLike": {
+        "oidc.op1.openshiftapps.com/2pa8d7pg05a236at2mnktjscdpe1biav:sub": "system:serviceaccount:tempo:*"
+      }
+    }
+  }]
+}

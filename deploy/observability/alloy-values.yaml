@@ -1,0 +1,152 @@
+# Grafana Alloy — Helm values for ROSA deployment
+# Deploys Alloy as a DaemonSet that tails every pod log in the cluster and
+# forwards log streams to the Loki distributed gateway.
+#
+# Alloy is the log collector for this observability stack. It is the link
+# between application stdout/stderr and Loki. No per-app configuration is
+# needed — any pod that writes to stdout is automatically collected.
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace alloy
+#
+#   # Label namespace to exclude Consul sidecar injection:
+#   kubectl label namespace alloy consul.hashicorp.com/connect-inject=false
+#
+#   # Grant SCCs for ROSA compatibility (Alloy needs to read /var/log on the node):
+#   oc adm policy add-scc-to-user privileged \
+#     system:serviceaccount:alloy:alloy
+#
+#   helm install alloy grafana/alloy \
+#       --namespace alloy \
+#       --values deploy/observability/alloy-values.yaml
+#
+# Upgrade after changes:
+#   helm upgrade alloy grafana/alloy \
+#       --namespace alloy \
+#       --values deploy/observability/alloy-values.yaml
+#
+# Reference: https://grafana.com/docs/alloy/latest/set-up/install/kubernetes/
+
+# ─── Alloy configuration (River syntax) ──────────────────────────────────────
+# The alloy.configMap.content block is the full Alloy pipeline in River syntax.
+# It does three things:
+#   1. Discovers all pods running in the cluster via the Kubernetes API.
+#   2. Tails the pod log files on the node filesystem.
+#   3. Pushes log streams labelled with namespace/pod/container to Loki.
+#
+# The traceID label is NOT added here — it is embedded in the log line itself
+# by the application's tracing.SpanLog() call. Loki's derivedFields regex
+# "traceID=(\w+)" extracts it at query time and renders it as a Tempo link.
+alloy:
+  configMap:
+    content: |
+      // ── Kubernetes pod discovery ──────────────────────────────────────────
+      // Discovers all running pods and their log file paths on the node.
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ── Relabelling: keep only running pods, attach useful labels ─────────
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        // Drop pods that are not running (Pending, Succeeded, Failed).
+        rule {
+          source_labels = ["__meta_kubernetes_pod_phase"]
+          regex         = "Pending|Succeeded|Failed|Completed"
+          action        = "drop"
+        }
+
+        // Build the log file path from the pod UID and container name.
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_uid",
+            "__meta_kubernetes_pod_container_name",
+          ]
+          target_label  = "__path__"
+          separator     = "/"
+          replacement   = "/var/log/pods/*$1/*.log"
+        }
+
+        // Carry forward labels that Loki stream selectors and LogQL filters use.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+
+      // ── Log file tail ─────────────────────────────────────────────────────
+      // Tails the log files discovered above. The positions file persists the
+      // read offset across Alloy restarts so no lines are re-sent to Loki.
+      local.file_match "pod_logs" {
+        path_targets = discovery.relabel.pod_logs.output
+      }
+
+      loki.source.file "pod_logs" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.write.loki_gateway.receiver]
+      }
+
+      // ── Loki write ────────────────────────────────────────────────────────
+      // Pushes log streams to the Loki distributed gateway in the loki namespace.
+      // The gateway is the single entry point for all push and query traffic.
+      loki.write "loki_gateway" {
+        endpoint {
+          url = "http://loki-loki-distributed-gateway.loki.svc.cluster.local/loki/api/v1/push"
+        }
+      }
+
+# ─── Deploy as DaemonSet ──────────────────────────────────────────────────────
+# A DaemonSet ensures one Alloy pod runs on every node so that no pod logs are
+# missed. StatefulSet and Deployment modes are for metric/trace pipelines only.
+controller:
+  type: daemonset
+
+# ─── Node filesystem access ───────────────────────────────────────────────────
+# Alloy must read /var/log/pods on the host. Mount the node log directory and
+# the kubelet positions directory (used by loki.source.file to track offsets).
+alloy:
+  mounts:
+    varlog: true        # mounts /var/log from the node into the Alloy container
+    dockercontainers: false  # not needed — using /var/log/pods directly
+
+# ─── ROSA SCC compatibility ───────────────────────────────────────────────────
+# Alloy needs to read host paths (/var/log/pods). The privileged SCC (granted
+# above) allows this. Set runAsUser to 0 so the DaemonSet can open node files.
+podSecurityContext:
+  runAsUser: 0
+  runAsGroup: 0
+
+# ─── Consul sidecar injection — opt out ──────────────────────────────────────
+# Alloy runs outside the Consul mesh. It does not need an Envoy sidecar and
+# the sidecar would interfere with Alloy's host-network log access.
+podAnnotations:
+  consul.hashicorp.com/connect-inject: "false"
+
+# ─── Resources ────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# ─── ServiceMonitor for Prometheus scraping ───────────────────────────────────
+serviceMonitor:
+  enabled: true
+  interval: 30s
