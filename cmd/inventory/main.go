@@ -109,6 +109,8 @@ func reserveHandler(store *inventoryStore) http.HandlerFunc {
 			return
 		}
 		tracing.Tag(span, "product.id", req.ProductID)
+		tracing.Tag(span, "reservation.quantity", fmt.Sprintf("%d", req.Quantity))
+		tracing.SpanLog(r.Context(), "INFO", "reserving inventory", "product.id", req.ProductID, "quantity", fmt.Sprintf("%d", req.Quantity))
 
 		ok, msg := store.reserve(req.ProductID, req.Quantity)
 		tracing.Tag(span, "reservation.success", fmt.Sprintf("%v", ok))

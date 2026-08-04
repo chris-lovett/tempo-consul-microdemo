@@ -83,6 +83,7 @@ func addItem(client *http.Client, catalogURL string) http.HandlerFunc {
 			return
 		}
 		tracing.Tag(span, "product.id", req.ProductID)
+		tracing.SpanLog(r.Context(), "INFO", "add item to cart", "user.id", userID, "product.id", req.ProductID)
 
 		// Fetch product details from catalog.
 		catalogReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,

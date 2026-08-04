@@ -82,8 +82,10 @@ func proxy(client *http.Client, target string) http.HandlerFunc {
 }
 
 func proxyTo(client *http.Client, w http.ResponseWriter, r *http.Request, target string) {
+	tracing.SpanLog(r.Context(), "INFO", "proxying request", "target", target)
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 	if err != nil {
+		tracing.SpanLog(r.Context(), "ERROR", "proxy request failed", "error", err.Error())
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 		return
 	}

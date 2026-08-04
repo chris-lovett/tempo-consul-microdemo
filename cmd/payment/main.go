@@ -79,6 +79,7 @@ func authorizeHandler(cfg *config) http.HandlerFunc {
 		}
 		tracing.Tag(span, "payment.amount", fmt.Sprintf("%.2f", req.Amount))
 		tracing.Tag(span, "order.id", req.OrderID)
+		tracing.SpanLog(r.Context(), "INFO", "authorizing payment", "order.id", req.OrderID, "payment.amount", fmt.Sprintf("%.2f", req.Amount))
 
 		failureRate, latencyMS := cfg.get()
 

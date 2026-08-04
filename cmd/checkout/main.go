@@ -56,6 +56,7 @@ func checkoutHandler(client *http.Client, cartURL, inventoryURL, paymentURL stri
 			return
 		}
 		tracing.Tag(span, "user.id", req.UserID)
+		tracing.SpanLog(r.Context(), "INFO", "checkout request received", "user.id", req.UserID)
 
 		ctx := r.Context()
 

@@ -64,6 +64,7 @@ func healthHandler(svc string) http.HandlerFunc {
 func listProducts(w http.ResponseWriter, r *http.Request) {
 	span := tracing.SpanFromContext(r)
 	tracing.Tag(span, "product.count", "8")
+	tracing.SpanLog(r.Context(), "INFO", "listing products", "product.count", "8")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(catalog)
 }
@@ -72,6 +73,7 @@ func getProduct(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	span := tracing.SpanFromContext(r)
 	tracing.Tag(span, "product.id", id)
+	tracing.SpanLog(r.Context(), "INFO", "getting product", "product.id", id)
 
 	p, ok := catalogIndex[id]
 	if !ok {

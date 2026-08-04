@@ -387,6 +387,9 @@ helm install alloy grafana/alloy \
   --namespace alloy \
   --values deploy/observability/alloy-values.yaml
 
+# If Grafana is using sidecar datasource provisioning, register the Loki datasource as well
+kubectl apply -f deploy/observability/grafana-loki-datasource.yaml -n grafana
+
 # Confirm one Alloy pod is Running on each node
 kubectl get pods -n alloy -o wide -w
 ```

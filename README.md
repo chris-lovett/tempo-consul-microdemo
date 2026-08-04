@@ -124,19 +124,38 @@ Edit `deploy/observability/grafana-tempo-datasource.yaml` — set `metadata.name
 kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n <grafana-namespace>
 ```
 
-If you also deploy Loki, register the Loki datasource in Grafana by applying `deploy/observability/grafana-loki-datasource.yaml` in the same Grafana namespace:
+### 2a. Enable Loki logs and trace-linked log search
+
+If you want logs correlated with Tempo traces, deploy Loki and Grafana Alloy. Alloy collects stdout/stderr from application pods and forwards log streams to Loki, while `tracing.SpanLog()` emits `traceID=<hex>` fields that Grafana can link back to Tempo.
 
 ```bash
+kubectl create namespace loki
+helm install loki grafana/loki-distributed \
+  --namespace loki \
+  --values deploy/observability/loki-values.yaml
+
+kubectl create namespace alloy
+kubectl label namespace alloy consul.hashicorp.com/connect-inject=false
+helm install alloy grafana/alloy \
+  --namespace alloy \
+  --values deploy/observability/alloy-values.yaml
+
 kubectl apply -f deploy/observability/grafana-loki-datasource.yaml -n <grafana-namespace>
 ```
 
-Then verify log volume in Grafana Explore using a query like:
+Then verify logs in Grafana Explore with:
 
 ```logql
 sum(rate({namespace="tracing-demo"}[5m]))
 ```
 
-> See [`deploy/observability/README.md`](deploy/observability/README.md) for the full step-by-step, including how to handle Grafana installs without the sidecar enabled.
+and verify trace-linked search with:
+
+```logql
+{namespace="tracing-demo"} |= "traceID"
+```
+
+> See [`deploy/observability/README.md`](deploy/observability/README.md) for the full Loki/Alloy installation and trace-linked log search flow.
 
 ### 3. Build and push service images
 
