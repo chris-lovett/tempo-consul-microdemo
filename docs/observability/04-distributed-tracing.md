@@ -42,6 +42,116 @@ This namespace model supports enterprise operational domains by separating RBAC,
 - Prometheus scrapes the collector and application metrics for dashboards and SLOs
 - Loki ingests logs and enables log volume exploration and trace-linked log search
 
+## Application developer quick start
+
+Platform operators deploy and manage the OTel Collector and its integration with Tempo, Prometheus, Loki, and Grafana. Application teams should follow these steps.
+
+### 1. Add OpenTelemetry SDK instrumentation
+
+Install the OTel SDK for your language and add a shared tracing helper if available. In this repo the common library is [`pkg/tracing`](pkg/tracing/tracing.go).
+
+- For Go apps, import `go.opentelemetry.io/otel` and `go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp`.
+- Create a tracer provider once at service startup.
+- Use a single shared tracer for the service.
+
+Example startup code in Go:
+
+```go
+func main() {
+  serviceName := getenv("SERVICE_NAME", "my-service")
+  tracer, cleanup := tracing.Init(serviceName)
+  defer cleanup()
+
+  client := httpx.NewClient(tracer)
+  router := mux.NewRouter()
+  router.Use(tracing.Middleware(tracer))
+
+  // use tracer and client throughout the service
+  http.ListenAndServe(":8080", router)
+}
+```
+
+For the demo app, see:
+- tracer provider and propagator setup: [`pkg/tracing/tracing.go`](../../pkg/tracing/tracing.go)
+- shared HTTP client instrumentation: [`pkg/httpx/client.go`](../../pkg/httpx/client.go)
+- example service startup patterns: [`cmd/frontend/main.go`](../../cmd/frontend/main.go), [`cmd/checkout/main.go`](../../cmd/checkout/main.go), [`cmd/cart/main.go`](../../cmd/cart/main.go)
+
+### 2. Configure the app to export to the shared collector
+
+Point your service at the platform-provided collector endpoint.
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+```
+
+In code, read this value from the environment and pass it to the OTLP exporter.
+
+Example Go exporter setup:
+
+```go
+func InitExporter(ctx context.Context) *otlptracegrpc.Exporter {
+  endpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
+  conn, err := grpc.DialContext(ctx, endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+  if err != nil {
+    log.Fatalf("failed to connect to OTLP endpoint: %v", err)
+  }
+
+  exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
+  if err != nil {
+    log.Fatalf("failed to create OTLP exporter: %v", err)
+  }
+  return exporter
+}
+```
+
+### 3. Register the global W3C propagator
+
+Ensure your service uses W3C TraceContext so `traceparent` travels between services. This should be set once during startup, before your HTTP middleware and client transport are created.
+
+In Go, that means:
+
+```go
+otel.SetTextMapPropagator(
+  propagation.NewCompositeTextMapPropagator(
+    propagation.TraceContext{},
+    propagation.Baggage{},
+  ),
+)
+```
+
+This code belongs in the same initialization path as your tracer provider, typically in `main()` or your shared tracing helper.
+
+This is required for distributed traces to join across service boundaries.
+
+### 4. Instrument inbound and outbound requests
+
+Wrap HTTP servers and clients so incoming requests continue existing traces and outgoing requests carry trace context.
+
+- Inbound: use server middleware such as `otelhttp.NewHandler(...)` or your framework’s integration.
+- Outbound: use an instrumented HTTP transport, e.g. `otelhttp.NewTransport(http.DefaultTransport)`.
+- Also add spans/attributes around business operations that matter for debugging.
+
+The important rule is: every request that crosses service boundaries should be traced and context-propagated.
+
+### 5. Verify traces in Grafana Tempo
+
+After deployment, generate traffic through your service and check Tempo.
+
+- Look up traces for your service name.
+- Confirm a trace includes spans from multiple services (e.g. `frontend` → `cart` → `checkout`).
+- If a trace stops at one service, check that W3C propagation and outbound instrumentation are both active.
+
+This is the minimal path: instrument the service, export to the shared collector, propagate trace context, and verify the resulting multi-service trace.
+
+### Who owns what
+
+- Platform operators: deploy and manage the collector, Tempo, Prometheus, Loki, dashboards, and metrics integration.
+- Application developers: add SDK instrumentation, export to the shared collector endpoint, and enable request context propagation.
+
+### Why this is enough
+
+This repo assumes the platform provides the collector and observability stack. Application owners do not need to configure Tempo, service graph metrics, or Grafana directly — only the service-side OTel instrumentation.
+
 ### Storage and security
 
 - Tempo persists traces in object storage and uses retention policies to manage lifecycle

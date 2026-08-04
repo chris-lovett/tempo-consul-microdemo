@@ -75,40 +75,6 @@ Each namespace boundary is intentional: it separates lifecycle, RBAC, resource q
 5. Prometheus scrapes `otel-collector` and application targets for metrics
 6. Loki ingests logs and provides log volume, app logs, and trace-linked log search
 
-### Kubernetes resource map
-
-Namespace `tracing-demo`
-- frontend
-- catalog
-- cart
-- checkout
-- inventory
-- payment
-- otel-collector
-
-Namespace `tempo`
-- tempo-distributor
-- tempo-query-frontend
-- tempo-querier
-- tempo-ingester
-- tempo-compactor
-
-Namespace `prometheus`
-- prometheus
-- prometheus-operator
-- service monitor CRDs
-
-Namespace `grafana`
-- grafana
-- Grafana sidecar for datasource provisioning
-
-Namespace `loki`
-- loki-loki-distributed-gateway
-- loki-distributor
-- loki-ingester
-- loki-querier
-- loki-compactor
-
 Grafana provides the unified observability surface while each backend maintains ownership of its signal type: traces, metrics, or logs.
 
 ---
