@@ -66,6 +66,11 @@ spec:
       labels:
         app.kubernetes.io/name: otel-collector
         app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # The OTel Collector is infrastructure, not an application service.
+        # It does not need mTLS, service discovery, or Envoy sidecar injection.
+        # Consul rewrites probes to Envoy admin ports which causes CrashLoopBackOff.
+        consul.hashicorp.com/connect-inject: "false"
     spec:
       serviceAccountName: otel-collector
       {{- with .Values.global.imagePullSecrets }}
