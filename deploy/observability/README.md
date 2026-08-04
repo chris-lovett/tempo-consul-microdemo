@@ -21,6 +21,7 @@ on OpenShift and wire it into this demo, starting from scratch.
 | `prometheus-values.yaml` | Helm values for deploying standalone Prometheus (kube-prometheus-stack) |
 | `tempo-values.yaml` | Helm values for deploying Grafana Tempo (microservices mode, S3 backend) |
 | `grafana-tempo-datasource.yaml` | ConfigMap that provisions the Tempo datasource into Grafana |
+| `grafana-loki-datasource.yaml` | ConfigMap that provisions the Loki datasource into Grafana |
 | `servicemonitor-otel-collector.yaml` | Tells Prometheus to scrape the OTel Collector |
 | `consul-values-observability.yaml` | Consul Helm overlay — metrics + Grafana deep-links from Consul UI |
 
@@ -111,6 +112,31 @@ Add it as a datasource in Grafana:
 4. Click **Save & test**
 5. Copy the datasource **UID** from the URL bar — you will need it in Step 3 below
    (it looks like `ae3f1234-...`, or may simply be `prometheus`)
+
+### 0g — Deploy Loki and register it in Grafana
+
+```bash
+kubectl create namespace loki
+helm install loki grafana/loki-distributed \
+  --namespace loki \
+  --values loki-values.yaml
+kubectl apply -f grafana-loki-datasource.yaml -n grafana
+```
+
+This provisions Loki in its own namespace and registers it with Grafana as a datasource named `Loki`.
+
+Then confirm log volume in Grafana:
+
+1. Open Grafana → **Explore** → select the **Loki** datasource
+2. Run a query such as:
+
+```logql
+sum(rate({namespace="tracing-demo"}[5m]))
+```
+
+This returns the log line ingestion rate for the demo application namespace. To inspect trace-linked logs, open **Explore** in Grafana and click the `traceID` link on a log line after selecting the `Loki` datasource.
+
+> If the Grafana sidecar is disabled, add `grafana-loki-datasource.yaml` as an additional datasource in your Grafana Helm values instead.
 
 ---
 

@@ -46,7 +46,72 @@ This repo is the production successor to [`zipkin-otel-microdemo`](https://githu
           └── W3C traceparent propagated through Envoy sidecars
 ```
 
-All six Go services share a single [`pkg/tracing`](pkg/tracing/tracing.go) package that initialises the OTel SDK and configures OTLP export.  The OTel Collector is deployed as a separate pod in the same namespace and acts as the single aggregation point — decoupling the application from the Tempo backend address and providing buffering, batching, and retries.
+### Enterprise-grade architecture
+
+All six Go services share a single [`pkg/tracing`](pkg/tracing/tracing.go) package that initializes the OpenTelemetry SDK and exports spans via OTLP/gRPC. Traces are not sent directly to Tempo; they are ingested by a dedicated OTel Collector instead.
+
+The OTel Collector runs as a separate pod in the application namespace and serves as the primary aggregation and export point for tracing traffic. It:
+
+- aggregates spans from all application services
+- normalizes exporter data for Tempo
+- buffers traces during short outages
+- retries on transient failures
+- forwards spans to `tempo-distributor:4317`
+
+### Namespace design
+
+- **`tracing-demo`** — application services and `otel-collector`
+- **`tempo`** — Grafana Tempo microservices, including distributor, query frontend, ingester, querier, and compactor
+- **`prometheus`** — Prometheus Operator / kube-prometheus-stack for cluster and application metrics
+- **`grafana`** — Grafana UI, dashboards, and datasource provisioning
+- **`loki`** — Loki microservices for log ingestion and query
+
+Each namespace boundary is intentional: it separates lifecycle, RBAC, resource quotas, and upgrade domains while preserving end-to-end telemetry.
+
+### Signal flow
+
+1. Application services emit traces to `otel-collector:4317` over OTLP/gRPC
+2. The OTel Collector buffers and forwards spans to `tempo-distributor:4317`
+3. Tempo writes trace chunks and indexes to object storage
+4. Grafana queries Tempo via `tempo-query-frontend` for trace search and service maps
+5. Prometheus scrapes `otel-collector` and application targets for metrics
+6. Loki ingests logs and provides log volume, app logs, and trace-linked log search
+
+### Kubernetes resource map
+
+Namespace `tracing-demo`
+- frontend
+- catalog
+- cart
+- checkout
+- inventory
+- payment
+- otel-collector
+
+Namespace `tempo`
+- tempo-distributor
+- tempo-query-frontend
+- tempo-querier
+- tempo-ingester
+- tempo-compactor
+
+Namespace `prometheus`
+- prometheus
+- prometheus-operator
+- service monitor CRDs
+
+Namespace `grafana`
+- grafana
+- Grafana sidecar for datasource provisioning
+
+Namespace `loki`
+- loki-loki-distributed-gateway
+- loki-distributor
+- loki-ingester
+- loki-querier
+- loki-compactor
+
+Grafana provides the unified observability surface while each backend maintains ownership of its signal type: traces, metrics, or logs.
 
 ---
 
@@ -93,6 +158,18 @@ Edit `deploy/observability/grafana-tempo-datasource.yaml` — set `metadata.name
 
 ```bash
 kubectl apply -f deploy/observability/grafana-tempo-datasource.yaml -n <grafana-namespace>
+```
+
+If you also deploy Loki, register the Loki datasource in Grafana by applying `deploy/observability/grafana-loki-datasource.yaml` in the same Grafana namespace:
+
+```bash
+kubectl apply -f deploy/observability/grafana-loki-datasource.yaml -n <grafana-namespace>
+```
+
+Then verify log volume in Grafana Explore using a query like:
+
+```logql
+sum(rate({namespace="tracing-demo"}[5m]))
 ```
 
 > See [`deploy/observability/README.md`](deploy/observability/README.md) for the full step-by-step, including how to handle Grafana installs without the sidecar enabled.
