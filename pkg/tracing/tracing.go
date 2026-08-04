@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -87,6 +88,14 @@ func Init(serviceName string) (trace.Tracer, func()) {
 		sdktrace.WithSampler(sampler),
 	)
 	otel.SetTracerProvider(tp)
+	// Register W3C TraceContext + Baggage as the global propagator so that
+	// otelhttp injects/extracts traceparent headers on all inbound and outbound
+	// HTTP requests. Without this the global propagator is a no-op and every
+	// service starts a new root span, breaking the multi-service waterfall.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	log.Printf("[%s] OTel tracer initialised (collector=%s, sampleRate=%.2f)", serviceName, endpoint, sampleRate)
 

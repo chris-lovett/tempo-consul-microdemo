@@ -9,6 +9,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
   config.yaml: |
+    extensions:
+      health_check:
+        endpoint: "0.0.0.0:13133"
+
     receivers:
       otlp:
         protocols:
@@ -37,6 +41,7 @@ data:
       {{- end }}
 
     service:
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
@@ -67,10 +72,20 @@ spec:
         app.kubernetes.io/name: otel-collector
         app.kubernetes.io/instance: {{ .Release.Name }}
       annotations:
-        # The OTel Collector is infrastructure, not an application service.
-        # It does not need mTLS, service discovery, or Envoy sidecar injection.
-        # Consul rewrites probes to Envoy admin ports which causes CrashLoopBackOff.
-        consul.hashicorp.com/connect-inject: "false"
+        # The OTel Collector runs inside the Consul mesh so that app services can
+        # reach it reliably via transparent proxy. Without a Consul service entry,
+        # Envoy has no upstream cluster for the collector and silently drops gRPC
+        # connections from mesh-injected pods.
+        #
+        # Probe rewriting suppression: Consul's connect-injector rewrites liveness/
+        # readiness probes to Envoy admin ports by default, which breaks the
+        # health_check extension on port 13133. Setting consul/service-port to the
+        # collector's actual service port tells the injector the app is healthy and
+        # suppresses the probe rewrite for the app container.
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/transparent-proxy: "true"
+        consul.hashicorp.com/service-port: "13133"
+        consul.hashicorp.com/enable-metrics-merging: "false"
     spec:
       serviceAccountName: otel-collector
       {{- with .Values.global.imagePullSecrets }}

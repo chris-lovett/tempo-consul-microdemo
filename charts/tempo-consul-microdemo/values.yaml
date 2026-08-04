@@ -61,7 +61,7 @@ services:
     replicas: 1
     image:
       repository: frontend
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8080
@@ -83,7 +83,7 @@ services:
     replicas: 1
     image:
       repository: catalog
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8081
@@ -99,7 +99,7 @@ services:
     replicas: 1
     image:
       repository: cart
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8082
@@ -117,7 +117,7 @@ services:
     replicas: 1
     image:
       repository: checkout
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8083
@@ -137,7 +137,7 @@ services:
     replicas: 1
     image:
       repository: payment
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8084
@@ -155,7 +155,7 @@ services:
     replicas: 1
     image:
       repository: inventory
-      tag: 0.2.0
+      tag: 0.2.1
     service:
       type: ClusterIP
       port: 8085
