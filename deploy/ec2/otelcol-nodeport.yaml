@@ -1,0 +1,30 @@
+# NodePort service exposing the otel-collector gRPC port externally
+# for use by the EC2 OTel Collector agent in vm-dc.
+#
+# This is a pragmatic demo shortcut — the EC2 collector exports spans
+# directly to the cluster over the NodePort rather than through the
+# Consul mesh gateway peering tunnel.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f deploy/ec2/otelcol-nodeport.yaml -n tracing-demo
+#
+# Then on EC2, update /etc/otelcol/config.yaml exporter endpoint to:
+#   endpoint: "<node-ip>:<nodeport>"
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-external
+  namespace: tracing-demo
+  labels:
+    app.kubernetes.io/name: otel-collector
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: otel-collector
+  ports:
+    - name: grpc-otlp
+      port: 4317
+      targetPort: grpc-otlp
+      protocol: TCP
+      nodePort: 30317

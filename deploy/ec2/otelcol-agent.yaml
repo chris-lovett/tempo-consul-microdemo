@@ -1,0 +1,69 @@
+# OTel Collector — agent mode for EC2 (vm-dc)
+#
+# Receives OTLP spans from fake-service (web + api) on the local VM and
+# forwards them to the in-cluster otel-collector in ocp-dc via the mesh
+# gateway peering link.
+#
+# Install:
+#   sudo mkdir -p /etc/otelcol
+#   sudo cp otelcol-agent.yaml /etc/otelcol/config.yaml
+#   sudo systemctl enable --now otelcol
+#
+# The upstream endpoint below uses the Consul-registered DNS name for the
+# otel-collector service exported from ocp-dc into vm-dc.
+# Consul resolves: otel-collector.virtual.ocp-dc.consul → mesh gateway → in-cluster pod.
+#
+# Prerequisites:
+#   - ocp-dc must export the otel-collector service to vm-dc peer (see
+#     deploy/consul/exported-services-ocp-dc.yaml)
+#   - vm-dc must allow the web and api sidecar proxies to reach otel-collector
+#     (see deploy/consul/service-intentions-vm-dc.hcl)
+#   - The Consul agent on this VM must be able to resolve .virtual.consul DNS
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  # Stamp every span with dc=vm-dc so cross-DC traces are identifiable in Tempo
+  resource:
+    attributes:
+      - key: dc
+        value: "vm-dc"
+        action: insert
+
+exporters:
+  otlp:
+    # otel-collector exported from ocp-dc, reachable through the mesh gateway.
+    # Consul transparent proxy resolves this via the peering virtual IP.
+    # If transparent proxy is not configured for the otelcol-agent service,
+    # use the explicit upstream local bind port instead (see web.hcl upstream block).
+    endpoint: "otel-collector.virtual.ocp-dc.consul:4317"
+    tls:
+      insecure: true
+  # Uncomment to log every span to the collector's stdout for debugging
+  # debug:
+  #   verbosity: detailed
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [otlp]

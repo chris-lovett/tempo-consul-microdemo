@@ -1,0 +1,19 @@
+# SamenessGroup — ocp-dc
+#
+# Mirror of the vm-dc sameness group. Declares that frontend in ocp-dc
+# and web in vm-dc are the same logical service.
+#
+# Apply in ocp-dc (must be in default namespace):
+#   kubectl apply -f deploy/consul/sameness-group-frontend.yaml -n default
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: SamenessGroup
+metadata:
+  name: web-frontend-group
+  namespace: default
+spec:
+  defaultForFailover: true
+  includeLocal: true
+  members:
+    # Local partition is covered by includeLocal: true
+    - peer: vm-dc

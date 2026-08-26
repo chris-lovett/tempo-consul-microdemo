@@ -1,0 +1,38 @@
+# ServiceIntentions — allow web and api (from vm-dc peer) to send spans
+# to otel-collector in ocp-dc.
+#
+# This REPLACES the existing allow-otel-collector intention in tracing-demo,
+# adding the peered web and api services as allowed sources.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f service-intentions-otel-collector.yaml -n tracing-demo
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: allow-otel-collector
+  namespace: tracing-demo
+spec:
+  destination:
+    name: otel-collector
+  sources:
+    # Existing in-cluster sources (preserve these)
+    - action: allow
+      name: frontend
+    - action: allow
+      name: checkout
+    - action: allow
+      name: cart
+    - action: allow
+      name: inventory
+    - action: allow
+      name: payment
+    - action: allow
+      name: catalog
+    # New: EC2 services from vm-dc peer sending spans via the mesh gateway
+    - action: allow
+      name: web
+      peer: vm-dc
+    - action: allow
+      name: api
+      peer: vm-dc

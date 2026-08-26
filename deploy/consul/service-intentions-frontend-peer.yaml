@@ -1,0 +1,42 @@
+# ServiceIntentions — allow ocp-dc frontend to be reached by vm-dc services
+# via the mesh gateway peering tunnel.
+#
+# NOTE: This file cannot be applied standalone because an existing
+# ServiceIntentions resource named "allow-frontend-failover" already owns
+# spec.destination.name=frontend in tracing-demo. Use kubectl patch instead:
+#
+#   kubectl patch serviceintentions allow-frontend-failover -n tracing-demo \
+#     --type=merge -p '{
+#       "spec": {
+#         "sources": [
+#           {"action": "allow", "name": "*"},
+#           {"action": "allow", "name": "web",    "peer": "vm-dc"},
+#           {"action": "allow", "name": "client", "peer": "vm-dc"}
+#         ]
+#       }
+#     }'
+#
+# The wildcard name: "*" covers local ocp-dc services only.
+# Peer sources (web, client from vm-dc) must be listed explicitly —
+# the wildcard does NOT match peer identities.
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: allow-frontend-failover
+  namespace: tracing-demo
+spec:
+  destination:
+    name: frontend
+  sources:
+    # Allow all local ocp-dc services
+    - action: allow
+      name: '*'
+    # Allow vm-dc web sidecar to reach ocp-dc frontend during failover
+    - action: allow
+      name: web
+      peer: vm-dc
+    # Allow vm-dc client sidecar to reach ocp-dc frontend during failover
+    - action: allow
+      name: client
+      peer: vm-dc

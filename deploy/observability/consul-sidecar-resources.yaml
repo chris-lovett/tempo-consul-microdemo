@@ -1,0 +1,26 @@
+# Consul sidecar resource patch for demo cluster (2-node, 3.5 CPU/node)
+# Reduces the connect-inject init container and dataplane container CPU requests
+# so that app pods can schedule alongside Tempo on a constrained cluster.
+#
+# Apply:
+#   helm upgrade consul hashicorp/consul -n consul \
+#     -f /tmp/consul-current-values.yaml \
+#     -f deploy/observability/consul-sidecar-resources.yaml
+
+connectInject:
+  initContainer:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 200Mi
+      limits:
+        cpu: 200m
+        memory: 500Mi
+  sidecarContainer:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+      limits:
+        cpu: 500m
+        memory: 500Mi

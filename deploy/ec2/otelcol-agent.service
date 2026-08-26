@@ -1,0 +1,40 @@
+# systemd unit for the OTel Collector agent on the EC2 VM (vm-dc)
+#
+# Install:
+#   sudo cp otelcol-agent.service /etc/systemd/system/otelcol.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now otelcol
+#
+# The binary can be downloaded from:
+#   https://github.com/open-telemetry/opentelemetry-collector-releases/releases
+#   Choose: otelcol-contrib_<version>_linux_amd64.tar.gz
+#
+# Quick install (run as root):
+#   VERSION=0.113.0
+#   curl -Lo /tmp/otelcol.tar.gz \
+#     "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${VERSION}/otelcol-contrib_${VERSION}_linux_amd64.tar.gz"
+#   tar -xzf /tmp/otelcol.tar.gz -C /tmp
+#   install -m 755 /tmp/otelcol-contrib /usr/local/bin/otelcol
+
+[Unit]
+Description=OpenTelemetry Collector Agent
+Documentation=https://opentelemetry.io/docs/collector/
+After=network.target consul.service
+
+[Service]
+ExecStart=/usr/local/bin/otelcol --config=/etc/otelcol/config.yaml
+Restart=always
+RestartSec=5
+User=nobody
+Group=nobody
+
+# Allow binding to port 4317/4318
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Basic hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

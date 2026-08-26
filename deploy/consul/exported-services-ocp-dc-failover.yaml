@@ -1,0 +1,25 @@
+# ExportedServices — ocp-dc exports app services to vm-dc for failover
+#
+# This allows vm-dc to import the in-cluster services so that a ServiceResolver
+# in vm-dc can fail over to them when local EC2 services become unhealthy.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f exported-services-ocp-dc-failover.yaml -n tracing-demo
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ExportedServices
+metadata:
+  name: default
+  namespace: tracing-demo
+spec:
+  services:
+    # Already exported for OTel — kept here for reference
+    - name: otel-collector
+      namespace: tracing-demo
+      consumers:
+        - peer: vm-dc
+    # Export frontend so vm-dc can fail over to in-cluster replica
+    - name: frontend
+      namespace: tracing-demo
+      consumers:
+        - peer: vm-dc

@@ -1,0 +1,18 @@
+# Consul Helm values patch — enable resource-apis experiment
+#
+# Consul Enterprise 2.0.x registers consul-dataplane-injected services as v2
+# workloads internally. Without resource-apis enabled, the peering layer uses
+# the v1 catalog path which has no node backing for these services, causing
+# zero endpoints to be exported to peer datacenters.
+#
+# This patch enables the resource-apis experiment so that peering correctly
+# exports v2 workload endpoints (e.g. frontend in tracing-demo) to vm-dc.
+#
+# Apply:
+#   helm upgrade consul hashicorp/consul -n consul \
+#     -f deploy/consul/consul-values-current.yaml \
+#     -f deploy/consul/consul-values-peering-fix.yaml
+
+global:
+  experiments:
+    - resource-apis

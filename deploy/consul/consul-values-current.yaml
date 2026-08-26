@@ -1,0 +1,126 @@
+connectInject:
+  apiGateway:
+    manageExternalCRDs: false
+  cni:
+    cniBinDir: /var/lib/cni/bin
+    cniNetDir: /etc/kubernetes/cni/net.d
+    enabled: true
+    logLevel: trace
+    multus: true
+    namespace: consul
+  consulNamespaces:
+    mirroringK8S: true
+  default: false
+  enabled: true
+  initContainer:
+    resources:
+      limits:
+        cpu: 200m
+        memory: 500Mi
+      requests:
+        cpu: 50m
+        memory: 200Mi
+  metrics:
+    defaultEnableMerging: false
+    defaultEnabled: false
+    defaultMergedMetricsPort: "20100"
+    defaultPrometheusScrapePath: /metrics
+    defaultPrometheusScrapePort: "20200"
+    enableGatewayMetrics: false
+  sidecarContainer:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 500Mi
+      requests:
+        cpu: 50m
+        memory: 100Mi
+  transparentProxy:
+    defaultEnabled: false
+    defaultOverwriteProbes: false
+dns:
+  enableRedirection: true
+  enabled: true
+  type: ClusterIP
+global:
+  acls:
+    manageSystemACLs: true
+  adminPartitions:
+    enabled: true
+    name: default
+  datacenter: ocp-dc
+  enableConsulNamespaces: true
+  enterpriseLicense:
+    enableLicenseAutoload: true
+    secretKey: key
+    secretName: license
+  image: registry.connect.redhat.com/hashicorp/consul-enterprise:2.0.1-ent-ubi
+  imageConsulDataplane: registry.connect.redhat.com/hashicorp/consul-dataplane:2.0.1-ubi
+  imageK8S: registry.connect.redhat.com/hashicorp/consul-k8s-control-plane:2.0.1-ubi
+  imagePullSecrets:
+  - name: pull-secret
+  metrics:
+    disableAgentHostName: false
+    enableAgentMetrics: false
+    enableHostMetrics: false
+    enabled: false
+    prefixFilter:
+      allowList:
+      - consul.rpc.server.call
+  name: consul
+  openshift:
+    enabled: true
+  peering:
+    enabled: true
+  tls:
+    enableAutoEncrypt: true
+    enabled: true
+    httpsOnly: true
+    verify: true
+  ui:
+    enabled: true
+ingressGateways:
+  consulNamespace: default
+  defaults:
+    replicas: 1
+  enabled: false
+  gateways:
+  - name: ingress-gateway-frontend
+    service:
+      ports:
+      - port: 8080
+      - port: 8443
+      type: LoadBalancer
+  logLevel: trace
+meshGateway:
+  enabled: true
+server:
+  bootstrapExpect: 1
+  enableAgentDebug: true
+  enabled: true
+  extraConfig: |
+    {
+      "performance": {
+        "raft_multiplier": 1
+      }
+    }
+  logLevel: TRACE
+  replicas: 1
+terminatingGateways:
+  consulNamespace: default
+  defaults:
+    replicas: 1
+  enabled: false
+  gateways:
+  - name: terminating-gateway
+    namespace: default
+  logLevel: trace
+ui:
+  enabled: true
+  ingress:
+    annotations: 'route.openshift.io/termination: passthrough'
+    enabled: true
+    hosts:
+    - paths:
+      - ""
+    pathType: ImplementationSpecific

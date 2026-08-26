@@ -1,0 +1,24 @@
+# ExportedServices — ocp-dc exports to vm-dc peer
+#
+# Exports:
+#   - otel-collector (tracing-demo ns) — already in place, preserved here
+#   - frontend       (tracing-demo ns) — failover target when vm-dc web is unhealthy
+#
+# Apply in ocp-dc:
+#   kubectl apply -f deploy/consul/exported-services-ocp-dc.yaml -n tracing-demo
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ExportedServices
+metadata:
+  name: default
+  namespace: tracing-demo
+spec:
+  services:
+    - name: otel-collector
+      namespace: tracing-demo
+      consumers:
+        - peer: vm-dc
+    - name: frontend
+      namespace: tracing-demo
+      consumers:
+        - peer: vm-dc

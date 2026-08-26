@@ -1,0 +1,21 @@
+# ServiceResolver — ocp-dc frontend fails over to vm-dc web
+#
+# When ALL healthy instances of frontend in ocp-dc fail their health checks,
+# Consul automatically routes new connections to the web service exported
+# from the vm-dc peer through the mesh gateway peering tunnel.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f deploy/consul/service-resolver-frontend-failover.yaml -n tracing-demo
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceResolver
+metadata:
+  name: frontend
+  namespace: tracing-demo
+spec:
+  failover:
+    "*":
+      targets:
+        - peer: vm-dc
+          service: web
+          serviceSubset: ""

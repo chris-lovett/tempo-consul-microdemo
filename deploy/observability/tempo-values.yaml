@@ -133,7 +133,7 @@ traces:
         endpoint: "0.0.0.0:4318"
 
 distributor:
-  replicas: 2
+  replicas: 1
   podAnnotations:
     consul.hashicorp.com/connect-inject: "false"
 
@@ -146,25 +146,25 @@ ingester:
     size: 10Gi
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
+      cpu: 100m
+      memory: 512Mi
     limits:
-      cpu: "2"
-      memory: 4Gi
+      cpu: "1"
+      memory: 2Gi
   podAnnotations:
     consul.hashicorp.com/connect-inject: "false"
 
 querier:
-  replicas: 2
+  replicas: 1
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 256Mi
   podAnnotations:
     consul.hashicorp.com/connect-inject: "false"
 
 queryFrontend:
-  replicas: 2
+  replicas: 1
   podAnnotations:
     consul.hashicorp.com/connect-inject: "false"
 

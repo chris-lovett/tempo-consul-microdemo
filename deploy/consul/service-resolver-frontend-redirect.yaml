@@ -1,0 +1,21 @@
+# ServiceResolver — default namespace redirect for frontend
+#
+# vm-dc's discovery chain resolves the failover target as
+# frontend.default.default.external.ocp-dc (default namespace).
+# The actual frontend service lives in the tracing-demo namespace.
+#
+# This resolver in the default namespace redirects to the real service,
+# so vm-dc's failover xDS cluster resolves the correct mesh gateway SNI.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f deploy/consul/service-resolver-frontend-redirect.yaml -n consul
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceResolver
+metadata:
+  name: frontend
+  namespace: default
+spec:
+  redirect:
+    service: frontend
+    namespace: tracing-demo

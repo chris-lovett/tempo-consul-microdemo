@@ -1,0 +1,22 @@
+# ServiceIntentions — allow vm-dc web peer to reach ocp-dc frontend
+# and allow ocp-dc frontend peer to reach vm-dc web during failover.
+#
+# Apply in ocp-dc:
+#   kubectl apply -f deploy/consul/service-intentions-failover.yaml -n tracing-demo
+
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: allow-frontend-failover
+  namespace: tracing-demo
+spec:
+  destination:
+    name: frontend
+  sources:
+    # Allow in-cluster services to reach frontend (existing mesh traffic)
+    - action: allow
+      name: "*"
+    # Allow vm-dc web to reach ocp-dc frontend as a failover target
+    - action: allow
+      name: web
+      peer: vm-dc
