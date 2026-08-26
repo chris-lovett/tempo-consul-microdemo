@@ -1,14 +1,15 @@
 SERVICES    := frontend catalog cart checkout payment inventory
+VM_SERVICES := vm-web vm-api vm-client
 IMAGE_REGISTRY ?= quay.io/chris_lovett/tempo-consul-microdemo
-IMAGE_TAG   ?= 0.2.0
+IMAGE_TAG   ?= 0.2.2
 PLATFORMS   ?= linux/amd64,linux/arm64
 NAMESPACE   ?= tracing-demo
 RELEASE     ?= tempo-demo
 
-.PHONY: build push build-multiarch helm-install helm-upgrade helm-uninstall \
-        helm-lint helm-template verify-traces
+.PHONY: build push build-multiarch build-vm push-vm helm-install helm-upgrade \
+        helm-uninstall helm-lint helm-template verify-traces
 
-# ─── Build ────────────────────────────────────────────────────────────────────
+# ─── Build (ocp-dc services) ──────────────────────────────────────────────────
 
 build:
 	@set -e; for svc in $(SERVICES); do \
@@ -32,6 +33,32 @@ build-multiarch:
 			-t $(IMAGE_REGISTRY)/$$svc:$(IMAGE_TAG) \
 			--push .; \
 	done
+
+# ─── Build (vm-dc EC2 binaries) ───────────────────────────────────────────────
+# Produces linux/amd64 static binaries for deployment on the EC2 instance.
+# Copy them to the VM with: scp bin/vm-* ec2-user@aws-vm-node-1:/usr/local/bin/
+
+build-vm:
+	@echo "Building vm-dc binaries (linux/amd64)"
+	@mkdir -p bin
+	@set -e; for svc in $(VM_SERVICES); do \
+		echo "  $$svc"; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+			go build -trimpath -ldflags="-s -w" \
+			-o bin/$$svc ./cmd/$$svc; \
+	done
+	@echo "Binaries written to bin/"
+
+push-vm: build-vm
+	@echo "Copying vm-dc binaries to EC2..."
+	scp bin/vm-web bin/vm-api bin/vm-client ec2-user@aws-vm-node-1:/usr/local/bin/
+	@echo "Restarting services on EC2..."
+	ssh ec2-user@aws-vm-node-1 \
+		"sudo systemctl restart web api && sudo pkill -f vm-client 2>/dev/null; \
+		 SERVICE_NAME=client PORT=9080 UPSTREAM_URI=http://localhost:9095 \
+		 OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
+		 nohup /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &"
+	@echo "Done. Tail logs: ssh ec2-user@aws-vm-node-1 'tail -f /tmp/vm-client.log'"
 
 # ─── Helm ─────────────────────────────────────────────────────────────────────
 

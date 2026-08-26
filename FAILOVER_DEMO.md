@@ -9,49 +9,74 @@ ServiceResolvers — with full distributed trace continuity in Grafana Tempo.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  ocp-dc  (OpenShift / ROSA)                         │
-│                                                     │
-│  frontend ──► checkout ──► cart                     │
-│                        ──► inventory                │
-│                        ──► payment                  │
-│                                                     │
-│  otel-collector ──► Tempo ──► Grafana               │
-└───────────────────────┬─────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  ocp-dc  (OpenShift / ROSA)                             │
+│                                                         │
+│  frontend ──► checkout ──► cart ──► catalog             │
+│                        ──► inventory                    │
+│                        ──► payment                      │
+│                                                         │
+│  otel-collector ──► Tempo ──► Grafana                   │
+└───────────────────────┬─────────────────────────────────┘
                         │  WAN Peering (mTLS)
                         │  Mesh Gateway ↔ Mesh Gateway
-┌───────────────────────┴─────────────────────────────┐
-│  vm-dc  (EC2 / aws-vm-node-1)                       │
-│                                                     │
-│  client ──► web ──► api                             │
-│                                                     │
-│  otelcol-agent ──► ocp-dc otel-collector            │
-└─────────────────────────────────────────────────────┘
+┌───────────────────────┴─────────────────────────────────┐
+│  vm-dc  (EC2 / aws-vm-node-1)                           │
+│                                                         │
+│  client ──► web ──► api (price lookup)                  │
+│              │                                          │
+│              └──► frontend (ocp-dc peer) ──► checkout   │
+│                                          ──► cart       │
+│                                          ──► inventory  │
+│                                          ──► payment    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### What the demo proves
 
-1. **Unified traces across VM + Kubernetes** — A single trace waterfall shows
-   spans from EC2-hosted `web`/`api` and K8s-hosted services under one trace ID.
-2. **Automatic failover with zero app changes** — When `web` on EC2 fails its
-   health check, Consul transparently routes traffic to `frontend` in ocp-dc
-   through the mesh gateway. No DNS changes, no app restarts, no redeployment.
-3. **Trace continuity through failover** — The W3C `traceparent` header travels
-   through the mesh gateway so the Tempo waterfall shows which datacenter served
-   each span.
+1. **True cross-DC trace waterfall** — A single trace ID spans both datacenters.
+   The Tempo waterfall shows: `client → web → api → frontend → checkout → cart → inventory → payment`.
+   Every span is tagged with its originating datacenter.
+2. **Automatic failover with zero app changes** — When `web` on EC2 fails its health
+   check, Consul transparently reroutes traffic to `frontend` in ocp-dc. No DNS changes,
+   no app restarts, no redeployment.
+3. **Unbroken trace continuity through failover** — The W3C `traceparent` header
+   travels through the mesh gateway. During failover, Tempo shows:
+   `client → frontend → checkout → cart → inventory → payment` — still one trace ID.
 
-### Failover directions
+### Normal operation flow (Scenario A baseline)
 
-| Scenario | Trigger | Consul routes to |
-|---|---|---|
-| **A — VM → OpenShift** | `web` health check critical in vm-dc | `frontend` in ocp-dc |
-| **B — OpenShift → VM** | `frontend` health check critical in ocp-dc | `web` in vm-dc |
+```
+vm-client
+  └─ POST /checkout ──► vm-web (Envoy port 9095)
+       ├─ GET /products/{id} ──► vm-api        [vm-dc span, price lookup]
+       ├─ POST /cart/{user}/items ──► frontend  [ocp-dc span, via peer port 9093]
+       │    └─ POST /cart/{user}/items ──► cart [ocp-dc span]
+       │         └─ GET /products/{id} ──► catalog [ocp-dc span]
+       └─ POST /checkout ──► frontend           [ocp-dc span]
+            └─ POST /checkout ──► checkout      [ocp-dc span]
+                 ├─ GET /cart/{user} ──► cart
+                 ├─ POST /reserve ──► inventory
+                 └─ POST /authorize ──► payment
+```
+
+### Failover flow (Scenario A: web down)
+
+```
+vm-client
+  └─ POST /checkout ──► frontend (Envoy port 9095, failover target)
+       ├─ POST /cart/{user}/items ──► cart
+       └─ POST /checkout ──► checkout
+            ├─ GET /cart/{user} ──► cart
+            ├─ POST /reserve ──► inventory
+            └─ POST /authorize ──► payment
+```
+
+All spans still land in Tempo under the same trace root from `client`.
 
 ---
 
 ## Pre-Flight Checklist
-
-Before running the demo, confirm the following are healthy:
 
 ```bash
 # ocp-dc — all pods Running
@@ -97,7 +122,7 @@ cd /path/to/repo
 bash deploy/ec2/setup.sh
 ```
 
-This applies in order: namespace creation, service definitions, exported services,
+Applies in order: namespace creation, service definitions, exported services,
 intentions, service defaults, and the service resolver.
 
 ### ocp-dc (on Mac)
@@ -127,109 +152,121 @@ kubectl get exportedservices,serviceintentions -n tracing-demo
 
 ---
 
+## Starting the Traffic Loop (EC2)
+
+```bash
+# Start services if not already running
+sudo systemctl start web api
+sudo systemctl start otelcol
+
+# Start vm-client (kills any stale instance first)
+sudo pkill -f vm-client 2>/dev/null; sleep 1
+
+SERVICE_NAME=client \
+PORT=9080 \
+UPSTREAM_URI=http://localhost:9095 \
+OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
+  /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
+
+# Tail the traffic log — one checkout per second
+tail -f /tmp/vm-client.log
+```
+
+You'll see output like:
+
+```
+20:40:31 http=200 dc=vm-dc   product="Wireless Headphones" order=ord-abc123 payment=authorized total=79.99 elapsed=142ms
+20:40:32 http=200 dc=vm-dc   product="Mechanical Keyboard" order=ord-def456 payment=authorized total=129.99 elapsed=138ms
+```
+
+---
+
 ## Scenario A: VM Fails → Failover to OpenShift
 
 **Story:** The EC2 VM web service becomes unhealthy. Consul detects the failure
-and routes traffic to `frontend` in ocp-dc — automatically, with no app changes,
-no DNS changes, no redeployment.
+and routes `client` traffic to `frontend` in ocp-dc — automatically, with no app
+changes, no DNS changes, no redeployment.
 
-### Step 1 — Start vm-client and the traffic loop (EC2 Terminal 1)
+### Step 1 — Start traffic loop and show baseline in Grafana
 
-```bash
-# Start vm-client if not already running
-sudo systemctl start web
-sudo pkill -f vm-client 2>/dev/null
-
-SERVICE_NAME=client PORT=9080 UPSTREAM_URI=http://localhost:9095 \
-  /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
-
-sleep 2
-
-# Continuous traffic loop — keep this running
-while true; do
-  response=$(curl -s --max-time 3 http://localhost:9080/)
-  name=$(echo "$response" | jq -r '.upstream_calls | to_entries[0].value.name // empty' 2>/dev/null)
-  code=$(echo "$response" | jq -r '.upstream_calls | to_entries[0].value.code // empty' 2>/dev/null)
-  echo "$(date +%H:%M:%S) served_by=${name:-unknown} http=$code"
-  sleep 1
-done
-```
-
-You'll see `served_by=web http=200` on every line while EC2 is healthy.
-
-### Step 2 — Show baseline in Grafana
-
-Open Grafana → Explore → Tempo and run:
+With the loop running (see above), open Grafana → Explore → Tempo and run:
 
 ```
-{ resource.dc = "vm-dc" }
+{ resource.service.name = "client" }
 ```
 
-Open a trace — shows `web → api` waterfall, both spans tagged `dc=vm-dc`.
+Open a trace — shows the full waterfall:
+`client → web → api → frontend → checkout → cart → inventory → payment`
+
+Spans tagged `dc=vm-dc`: `client`, `web`, `api`
+Spans from ocp-dc: `frontend`, `checkout`, `cart`, `inventory`, `payment`
 
 **Demo script:**
-> *"The EC2 VM is healthy. Every request from the client service routes through
-> the local web service, which calls api. Both services are instrumented with
-> OpenTelemetry and every span lands in Tempo. This is our baseline."*
+> *"This is a single transaction. The client is on an EC2 VM. It calls the
+> local web service, which looks up the product price from api — both on the VM,
+> both tagged dc=vm-dc. Then web crosses the Consul mesh gateway peering tunnel
+> to frontend in OpenShift, which runs the full checkout pipeline. One trace ID,
+> two datacenters, seven services."*
 
-### Step 3 — Trigger the failure (EC2 Terminal 2)
+### Step 2 — Trigger the failure (EC2 Terminal 2)
 
 ```bash
 sudo systemctl stop web
 ```
 
-Watch Terminal 1 — within ~10 seconds:
+Watch the traffic log — within ~10 seconds:
 
 ```
-20:40:31 served_by=web    http=200
-20:40:32 served_by=unknown http=503   ← single in-flight during health check window
-20:40:33 served_by=unknown http=404   ← Consul failover active, traffic on ocp-dc frontend
-20:40:34 served_by=unknown http=404
+20:40:40 http=200 dc=vm-dc   product="Running Shoes" order=ord-xyz789 payment=authorized total=94.95 elapsed=135ms
+20:40:41 http=502 dc=unknown  ← single in-flight during health check window
+20:40:42 http=200 dc=unknown  ← Consul failover active; client now routes to frontend directly
+20:40:43 http=200 dc=unknown  product="Yoga Mat" order=ord-uvw012 payment=authorized total=34.99 elapsed=201ms
 ```
 
-> The `http=404` response is expected — `frontend` on ocp-dc doesn't expose a
-> root `/` route. The routing itself is working; requests are reaching ocp-dc.
+> `dc=unknown` appears because `client` is now hitting `frontend` directly —
+> frontend returns its own response shape, not vm-web's. Correct behaviour.
 
 Consul UI (vm-dc) → Services → `web`: health check turns red.
 
 **Demo script:**
-> *"The web service on the EC2 VM just stopped. The Consul health check failed.
-> The ServiceResolver saw zero healthy local instances and began routing through
-> the mesh gateway peering tunnel to frontend in our OpenShift cluster.
-> The traffic loop never stopped — it just switched datacenters.
-> No app changes. No DNS changes. No deployment. Under 10 seconds."*
+> *"Web on the EC2 VM just stopped. Consul's ServiceResolver saw zero healthy
+> local instances and began routing the client's upstream through the mesh
+> gateway to frontend in OpenShift. The traffic loop never stopped.
+> No app changes. No DNS changes. Under 10 seconds."*
 
-### Step 4 — Show the failover trace in Tempo
-
-In Grafana → Explore → Tempo:
+### Step 3 — Show the failover trace in Tempo
 
 ```
-{ .service.name = "frontend" }
+{ resource.service.name = "client" }
 ```
 
-Sort by most recent. Requests that were in-flight during the failover window
-will show the path crossing from vm-dc into ocp-dc.
+Sort by most recent. Click a trace from after the failover — the waterfall now shows:
+`client → frontend → checkout → cart → inventory → payment`
+
+The `client` span is the same root as before failover. The `web` and `api` spans
+are gone (web is down). `frontend` is the first child, inheriting the trace context
+from `client` through the mesh gateway.
 
 **Demo script:**
-> *"The W3C traceparent header crossed the mesh gateway into OpenShift. The
-> request that started on the VM was served by frontend in Kubernetes — and
-> every span is in Tempo under the same trace ID."*
+> *"The W3C traceparent header crossed the mesh gateway. The request that started
+> on the EC2 VM was served by frontend in Kubernetes — and every span is in Tempo
+> under the same trace ID. The trace itself documents the datacenter handoff."*
 
-### Step 5 — Restore and show recovery (EC2 Terminal 2)
+### Step 4 — Restore and show recovery (EC2 Terminal 2)
 
 ```bash
 sudo systemctl start web
 ```
 
-Within 10 seconds the health check passes, Consul stops using the failover
-target, and Terminal 1 returns to `served_by=web http=200`.
+Within 10 seconds the health check passes, Consul stops using the failover target,
+and the traffic log returns to `dc=vm-dc` with the full cross-DC waterfall.
 
 ---
 
 ## Scenario B: OpenShift Fails → Failover to VM
 
-**Story:** The OpenShift frontend deployment is scaled to zero. Consul detects
-the failure and routes incoming requests to `web` on the EC2 VM.
+**Story:** The OpenShift frontend deployment is scaled to zero. Consul routes
+incoming ocp-dc requests to `web` on the EC2 VM.
 
 ### Step 1 — Start a traffic loop against ocp-dc (Mac terminal)
 
@@ -237,14 +274,15 @@ the failure and routes incoming requests to `web` on the EC2 VM.
 FRONTEND=frontend-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com
 
 while true; do
-  code=$(curl -sk -o /dev/null -w "%{http_code}" \
-    "https://${FRONTEND}/health")
-  echo "$(date +%H:%M:%S) ocp-dc frontend http=$code"
+  response=$(curl -sk -X POST \
+    "https://${FRONTEND}/checkout" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"ocp-user"}')
+  status=$(echo "$response" | jq -r '.payment_status // "error"' 2>/dev/null)
+  echo "$(date +%H:%M:%S) ocp-dc frontend payment=$status"
   sleep 1
 done
 ```
-
-You'll see `http=200` while ocp-dc is healthy.
 
 ### Step 2 — Trigger the failure
 
@@ -253,29 +291,22 @@ kubectl scale deployment frontend --replicas=0 -n tracing-demo
 ```
 
 Consul health check for `frontend` fails within 10 seconds. The ServiceResolver
-kicks in and routes incoming requests to `web` on EC2 via the mesh gateway.
+kicks in and routes requests to `web` on EC2 via the mesh gateway.
 
 **Demo script:**
-> *"We just scaled frontend to zero in OpenShift. The Consul health check saw
+> *"We just scaled frontend to zero in OpenShift. Consul's health check saw
 > no healthy instances and, using the ServiceResolver failover config, began
 > routing those HTTPS requests through the mesh gateway to the EC2 VM.
 > No Ingress change. No DNS TTL. No load balancer update. Under 10 seconds."*
 
 ### Step 3 — Show cross-DC trace in Tempo
 
-In Grafana → Explore → Tempo:
-
 ```
 { resource.dc = "vm-dc" }
 ```
 
-Open the most recent trace. Requests that entered through the ocp-dc ingress
-but were served by vm-dc will show `web → api` spans tagged `dc=vm-dc`.
-
-**Demo script:**
-> *"The trace shows the request entered through the OpenShift ingress, crossed
-> the mesh gateway peering tunnel to the EC2 VM, and was handled by web and api
-> there. One trace ID, two datacenters, full observability."*
+Open the most recent trace — shows `web → api` spans tagged `dc=vm-dc`, produced
+by requests that entered through the ocp-dc Ingress but were served by the EC2 VM.
 
 ### Step 4 — Restore OpenShift
 
@@ -283,46 +314,43 @@ but were served by vm-dc will show `web → api` spans tagged `dc=vm-dc`.
 kubectl scale deployment frontend --replicas=1 -n tracing-demo
 ```
 
-Traffic returns to ocp-dc frontend automatically once the health check passes.
-
 ---
 
-## Scenario C: Both Healthy — Side-by-Side
+## Scenario C: Side-by-Side — Both DCs Healthy
 
-Show traces from both datacenters in Grafana simultaneously.
+Show both DCs generating traces simultaneously in two Grafana tabs.
 
-Open two Explore tabs:
-
-**Tab 1 — ocp-dc traces:**
+**Tab 1 — full cross-DC waterfall:**
 ```
-{ .service.name = "frontend" && duration > 50ms }
+{ resource.service.name = "client" }
 ```
 
-**Tab 2 — vm-dc traces:**
+**Tab 2 — ocp-dc only (direct traffic):**
 ```
-{ resource.dc = "vm-dc" }
+{ resource.service.name = "frontend" && duration > 50ms }
 ```
 
-Generate traffic to both simultaneously:
+Generate direct ocp-dc traffic:
 
 ```bash
-# Terminal 1 (Mac) — ocp-dc
-for i in $(seq 1 10); do
-  curl -sk "https://frontend-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com/checkout" \
-    -H "Content-Type: application/json" -d '{"user_id":"ocp-user"}' > /dev/null
-  sleep 0.5
-done
+FRONTEND=frontend-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com
 
-# Terminal 2 (EC2) — vm-dc
 for i in $(seq 1 10); do
-  curl -s http://localhost:9080/ > /dev/null
+  curl -sk -X POST "https://${FRONTEND}/cart/direct-user/items" \
+    -H "Content-Type: application/json" \
+    -d '{"product_id":"prod-2","quantity":1}' > /dev/null
+  curl -sk -X POST "https://${FRONTEND}/checkout" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"direct-user"}' > /dev/null
   sleep 0.5
 done
 ```
 
 **Demo script:**
-> *"Both datacenters are generating traces simultaneously. One observability
-> plane for your entire estate, regardless of where services run."*
+> *"Two entry points, one observability plane. Tab 1 shows checkout requests
+> that originated on the EC2 VM and crossed the mesh gateway to OpenShift.
+> Tab 2 shows requests that hit the ocp-dc Ingress directly. Same Tempo,
+> same trace format, regardless of where the request started."*
 
 ---
 
@@ -343,7 +371,7 @@ sudo systemctl start web         # on EC2
 # Restore ocp-dc frontend
 kubectl scale deployment frontend --replicas=1 -n tracing-demo
 
-# Inject payment errors (existing demo feature)
+# Inject payment errors
 curl -sk -X POST \
   "https://frontend-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com/payment/admin/config" \
   -H "Content-Type: application/json" \
@@ -359,16 +387,22 @@ curl -sk -X POST \
 ### Key TraceQL queries
 
 ```
-# All vm-dc traces
+# Full cross-DC waterfall (client origin on vm-dc)
+{ resource.service.name = "client" }
+
+# All vm-dc spans
 { resource.dc = "vm-dc" }
 
 # All ocp-dc frontend traces
-{ .service.name = "frontend" }
+{ resource.service.name = "frontend" }
+
+# Traces that crossed DCs (both client and frontend in same trace)
+{ resource.service.name = "client" } | select(resource.dc)
 
 # Slow traces (latency injection active)
-{ .service.name = "frontend" && duration > 500ms }
+{ resource.service.name = "frontend" && duration > 500ms }
 
-# Error traces
+# Error / declined payment traces
 { status = error }
 ```
 
@@ -387,13 +421,14 @@ curl -sk -X POST \
 
 | Symptom | Check | Fix |
 |---|---|---|
-| `frontend` not in ImportedServices | `kubectl get exportedservices -n tracing-demo` | Re-apply `exported-services-ocp-dc-failover.yaml`; ensure `namespace: tracing-demo` is set per service |
-| `frontend` imported but health API returns empty | `curl .../v1/health/service/frontend?peer=ocp-dc` | Create `tracing-demo` namespace on vm-dc: `curl -X PUT .../v1/namespace -d '{"Name":"tracing-demo"}'` |
-| Traffic blanks but doesn't flip to `frontend` | Check `ejections_overflow` stat on client sidecar | Ensure `service-defaults-client.hcl` is applied with `MaxEjectionPercent=100` |
-| `403 RBAC: access denied` on upstream | Check intentions on ocp-dc | Patch `allow-frontend-failover` to add `client` peer source from `vm-dc` |
-| `failed_eds_health` on failover cluster | `curl localhost:<admin-port>/clusters \| grep failover` | Verify SamenessGroup is deleted; service-resolver-web-failover.hcl is applied |
+| `frontend` not in ImportedServices | `kubectl get exportedservices -n tracing-demo` | Re-apply `exported-services-ocp-dc-failover.yaml`; ensure `namespace: tracing-demo` per service |
+| `frontend` imported but health API empty | `curl .../v1/health/service/frontend?peer=ocp-dc` | Create `tracing-demo` namespace: `curl -X PUT .../v1/namespace -d '{"Name":"tracing-demo"}'` |
+| Traffic blanks but doesn't flip to frontend | Check `ejections_overflow` stat | Ensure `service-defaults-client.hcl` has `MaxEjectionPercent=100` |
+| `403 RBAC: access denied` on upstream | Check intentions on ocp-dc | Patch `allow-frontend-failover` to include `web` and `client` from vm-dc peer |
+| vm-web returns 502 on /checkout | `journalctl -u web` on EC2 | Verify port 9093 upstream is healthy: `curl -v http://localhost:9093/health` |
+| `failed_eds_health` on failover cluster | `curl localhost:<admin>/clusters \| grep failover` | Verify service-resolver-web-failover.hcl is applied |
 | Client sidecar fails to start | `cat /tmp/envoy-client.log` | Kill stale envoy processes; use `-grpc-addr 127.0.0.1:8502` |
-| OTel spans not reaching Tempo | `journalctl -u otelcol -n 30` | Confirm `localhost:9317` upstream is healthy in web sidecar |
+| OTel spans not reaching Tempo | `journalctl -u otelcol -n 30` | Confirm `localhost:9317` upstream is healthy |
 | `consul reload` returns 403 | Token lacks `agent:write` | Use bootstrap token `REDACTED_BOOTSTRAP_TOKEN` |
 
 ---
@@ -403,7 +438,7 @@ curl -sk -X POST \
 | File | Purpose | Apply where |
 |---|---|---|
 | `deploy/ec2/setup.sh` | Applies all vm-dc config entries in order | EC2: `bash deploy/ec2/setup.sh` |
-| `deploy/ec2/web.hcl` | Consul service def for web (otel-collector upstream) | EC2: `/etc/consul.d/web.hcl` |
+| `deploy/ec2/web.hcl` | Consul service def for web (api + frontend peer + otel-collector upstreams) | EC2: `/etc/consul.d/web.hcl` |
 | `deploy/ec2/api.hcl` | Consul service def for api | EC2: `/etc/consul.d/api.hcl` |
 | `deploy/ec2/client.hcl` | Consul service def for client (upstream: web:9095) | EC2: `/etc/consul.d/client.hcl` |
 | `deploy/ec2/exported-services-vm-dc.hcl` | Export web+api to ocp-dc peer | EC2: `consul config write` |
@@ -414,4 +449,5 @@ curl -sk -X POST \
 | `deploy/ec2/service-resolver-web-failover.hcl` | web fails over to ocp-dc frontend (tracing-demo ns) | EC2: `consul config write` |
 | `deploy/consul/exported-services-ocp-dc-failover.yaml` | Export otel-collector+frontend to vm-dc | ocp-dc: `kubectl apply -n tracing-demo` |
 | `deploy/consul/service-intentions-otel-collector.yaml` | Allow vm-dc peers to reach otel-collector | ocp-dc: `kubectl apply -n tracing-demo` |
+| `deploy/consul/service-intentions-frontend-peer.yaml` | Patch command: allow vm-dc web+client → frontend | ocp-dc: `kubectl patch` (see Setup section) |
 | `deploy/consul/peering-setup.md` | Full peering setup sequence (rebuild from scratch) | Reference |

@@ -91,7 +91,7 @@ echo "      OK"
 #   upstream so Envoy can eject the endpoint and promote to the peer
 #   failover target when web goes down.
 
-echo "[5/7] Applying service-defaults (web + client)..."
+echo "[5/6] Applying service-defaults (web + client)..."
 consul config write "$REPO_ROOT/deploy/ec2/service-defaults-web.hcl"
 consul config write "$REPO_ROOT/deploy/ec2/service-defaults-client.hcl"
 echo "      OK"
@@ -101,7 +101,7 @@ echo "      OK"
 # Namespace = "tracing-demo" is required because ocp-dc uses namespace
 # mirroring, so frontend is imported as default/tracing-demo/frontend on vm-dc.
 
-echo "[6/7] Applying service-resolver (web → ocp-dc frontend)..."
+echo "[6/6] Applying service-resolver (web → ocp-dc frontend)..."
 consul config write "$REPO_ROOT/deploy/ec2/service-resolver-web-failover.hcl"
 echo "      OK"
 
@@ -138,4 +138,9 @@ echo ""
 echo "Next: apply ocp-dc resources from your Mac:"
 echo "  kubectl apply -f deploy/consul/exported-services-ocp-dc-failover.yaml -n tracing-demo"
 echo "  kubectl apply -f deploy/consul/service-intentions-otel-collector.yaml -n tracing-demo"
-echo "  kubectl apply -f deploy/consul/sameness-group-frontend.yaml -n default"
+echo "  kubectl patch serviceintentions allow-frontend-failover -n tracing-demo \\"
+echo "    --type=merge -p '{\"spec\":{\"sources\":["
+echo "      {\"action\":\"allow\",\"name\":\"*\"},"
+echo "      {\"action\":\"allow\",\"name\":\"web\",\"peer\":\"vm-dc\"},"
+echo "      {\"action\":\"allow\",\"name\":\"client\",\"peer\":\"vm-dc\"}"
+echo "    ]}}'"
