@@ -60,7 +60,7 @@ sudo cp "$REPO_ROOT/deploy/ec2/web.hcl"    /etc/consul.d/web.hcl
 sudo cp "$REPO_ROOT/deploy/ec2/api.hcl"    /etc/consul.d/api.hcl
 sudo cp "$REPO_ROOT/deploy/ec2/client.hcl" /etc/consul.d/client.hcl
 echo "      Reloading Consul agent..."
-consul reload
+consul reload -token "$CONSUL_HTTP_TOKEN"
 echo "      OK"
 
 # ── Step 3 — Exported services ───────────────────────────────────────────────

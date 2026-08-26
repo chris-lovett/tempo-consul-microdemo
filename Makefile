@@ -36,7 +36,19 @@ build-multiarch:
 
 # ─── Build (vm-dc EC2 binaries) ───────────────────────────────────────────────
 # Produces linux/amd64 static binaries for deployment on the EC2 instance.
-# Copy them to the VM with: scp bin/vm-* ec2-user@aws-vm-node-1:/usr/local/bin/
+#
+# Usage — build only (outputs to bin/):
+#   make build-vm
+#
+# Usage — build and deploy (requires EC2_HOST to be set):
+#   EC2_HOST=<public-ip-or-hostname> make push-vm
+#   EC2_HOST=ec2-user@1.2.3.4       make push-vm   # explicit user
+#
+# Alternative — run deploy/ec2/install.sh directly on EC2 (no SCP needed):
+#   ssh ec2-user@<host> "cd /path/to/repo && bash deploy/ec2/install.sh"
+
+EC2_HOST ?= $(error EC2_HOST is not set. Usage: EC2_HOST=<ip-or-host> make push-vm)
+EC2_USER ?= ec2-user
 
 build-vm:
 	@echo "Building vm-dc binaries (linux/amd64)"
@@ -50,15 +62,15 @@ build-vm:
 	@echo "Binaries written to bin/"
 
 push-vm: build-vm
-	@echo "Copying vm-dc binaries to EC2..."
-	scp bin/vm-web bin/vm-api bin/vm-client ec2-user@aws-vm-node-1:/usr/local/bin/
+	@echo "Copying vm-dc binaries to $(EC2_USER)@$(EC2_HOST)..."
+	scp bin/vm-web bin/vm-api bin/vm-client $(EC2_USER)@$(EC2_HOST):/usr/local/bin/
 	@echo "Restarting services on EC2..."
-	ssh ec2-user@aws-vm-node-1 \
-		"sudo systemctl restart web api && sudo pkill -f vm-client 2>/dev/null; \
+	ssh $(EC2_USER)@$(EC2_HOST) \
+		"sudo systemctl restart web api && sudo pkill -f vm-client 2>/dev/null; sleep 1; \
 		 SERVICE_NAME=client PORT=9080 UPSTREAM_URI=http://localhost:9095 \
 		 OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
 		 nohup /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &"
-	@echo "Done. Tail logs: ssh ec2-user@aws-vm-node-1 'tail -f /tmp/vm-client.log'"
+	@echo "Done. Tail logs: ssh $(EC2_USER)@$(EC2_HOST) 'tail -f /tmp/vm-client.log'"
 
 # ─── Helm ─────────────────────────────────────────────────────────────────────
 
