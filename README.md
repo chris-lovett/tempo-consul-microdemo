@@ -2,23 +2,6 @@
 
 Production-ready distributed tracing demo: six Go microservices running on **Consul Service Mesh**, instrumented with the **OpenTelemetry SDK**, emitting spans via an **OTel Collector** to **Grafana Tempo**.
 
-This repo is the production successor to [`zipkin-otel-microdemo`](https://github.com/chris-lovett/zipkin-otel-microdemo).  The demo application and scenarios are preserved; the tracing backend has been completely replaced.
-
----
-
-## What Changed from the Zipkin POC
-
-| Aspect | Zipkin POC | This repo |
-|---|---|---|
-| Instrumentation library | `zipkin-go` SDK | OpenTelemetry Go SDK (`go.opentelemetry.io/otel`) |
-| Wire format | Zipkin JSON v2 (`/api/v2/spans`) | OTLP/gRPC |
-| Header propagation | B3 (Zipkin proprietary) | **W3C TraceContext** (`traceparent`) |
-| In-cluster collector | Zipkin server (in-memory) | **OpenTelemetry Collector** |
-| Trace storage | Lost on pod restart | **Grafana Tempo** (object storage — S3/GCS/MinIO) |
-| Grafana integration | Zipkin data source | Native **Tempo** data source |
-| Service graph | Zipkin Dependencies tab | Grafana **service map** panel |
-| Retention | None (ephemeral) | Configurable (default 30 days) |
-
 ---
 
 ## Architecture
@@ -341,9 +324,11 @@ kubectl delete namespace tempo
 
 | File | Description |
 |---|---|
-| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Step-by-step interactive demo scenarios |
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Step-by-step demo scenarios including cross-DC failover (Demo Flow 5) |
 | [docs/observability/04-distributed-tracing.md](docs/observability/04-distributed-tracing.md) | Architecture, verification, troubleshooting |
 | [deploy/observability/README.md](deploy/observability/README.md) | Full observability stack setup |
 | [deploy/observability/tempo-values.yaml](deploy/observability/tempo-values.yaml) | Tempo Helm values (production) |
 | [deploy/observability/grafana-tempo-datasource.yaml](deploy/observability/grafana-tempo-datasource.yaml) | Grafana data source CR |
 | [deploy/observability/consul-values-observability.yaml](deploy/observability/consul-values-observability.yaml) | Consul metrics + UI deep-links |
+| [deploy/consul/peering-setup.md](deploy/consul/peering-setup.md) | Consul Cluster Peering setup (vm-dc ↔ ocp-dc) |
+| [deploy/ec2/setup.sh](deploy/ec2/setup.sh) | One-shot vm-dc Consul config apply script |
