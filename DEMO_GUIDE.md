@@ -299,18 +299,41 @@ You should see a live node graph: `user → frontend → cart → catalog`, `fro
 
 > **Current state**: The traffic loop on EC2 is routing `client → frontend` directly via the Consul ServiceResolver (web is healthy but the failover path is active due to ACL token rotation earlier today). This still demonstrates cross-DC observability — the `client` span from the EC2 VM and all ocp-dc spans appear in one trace.
 
-### 1. Verify Traffic Loop is Running (EC2)
+### 1. Start vm-client and Drive Traffic (EC2)
 
-On the EC2 instance, the `vm-client` process should already be running. If not:
+`vm-client` is a tracing proxy: it listens on `:9080`, wraps each request in an OTel span, then forwards to Envoy (`:9095`) which routes through the Consul mesh gateway to ocp-dc frontend.
 
 ```bash
-# On EC2
+# On EC2 — Terminal 1: start the tracer (if not already running)
 sudo pkill -f vm-client 2>/dev/null; sleep 1
 SERVICE_NAME=client PORT=9080 UPSTREAM_URI=http://localhost:9095 \
 OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
   /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
-
 tail -f /tmp/vm-client.log
+# Expected: "[client] OTel tracer initialised" and "listening on :9080"
+```
+
+```bash
+# On EC2 — Terminal 2: drive traffic through the tracer on port 9080
+# (NOT port 9095 — 9095 is the raw Envoy upstream, which bypasses the tracer)
+while true; do
+  curl -s http://localhost:9080/products > /dev/null
+  curl -s -X POST http://localhost:9080/cart/demo-user/items \
+    -H "Content-Type: application/json" \
+    -d '{"product_id":"prod-1","quantity":1}' > /dev/null
+  curl -s -X POST http://localhost:9080/checkout \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"demo-user"}' > /dev/null
+  sleep 2
+done
+```
+
+Watch Terminal 1 — you should see requests logged. If port 9095 refuses, check the sidecar:
+
+```bash
+systemctl is-active client-envoy
+curl -s http://localhost:9095/health -o /dev/null -w "%{http_code}\n"
+# Expect 200 — if not, run: sudo systemctl restart client-envoy
 ```
 
 ### 2. In Grafana → Explore → Tempo
