@@ -54,7 +54,7 @@ data:
         tls:
           insecure: {{ .Values.otelCollector.tempoTLSInsecure }}
       prometheus:
-        endpoint: "0.0.0.0:8888"
+        endpoint: "0.0.0.0:8889"
         namespace: otelcol
       {{- if .Values.otelCollector.debug }}
       debug:
@@ -135,7 +135,7 @@ spec:
               containerPort: 13133
               protocol: TCP
             - name: metrics
-              containerPort: 8888
+              containerPort: 8889
               protocol: TCP
           volumeMounts:
             - name: config
@@ -184,7 +184,7 @@ spec:
       protocol: TCP
       targetPort: http-otlp
     - name: metrics
-      port: 8888
+      port: 8889
       protocol: TCP
       targetPort: metrics
 {{- end }}
