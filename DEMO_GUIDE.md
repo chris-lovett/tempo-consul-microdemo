@@ -299,9 +299,24 @@ You should see a live node graph: `user → frontend → cart → catalog`, `fro
 
 > **Current state**: The traffic loop on EC2 is routing `client → frontend` directly via the Consul ServiceResolver (web is healthy but the failover path is active due to ACL token rotation earlier today). This still demonstrates cross-DC observability — the `client` span from the EC2 VM and all ocp-dc spans appear in one trace.
 
-### 1. Start vm-client and Drive Traffic (EC2)
+### 1. Prerequisite: trigger failover (stop local web)
 
-`vm-client` is a tracing proxy: it listens on `:9080`, wraps each request in an OTel span, then forwards to Envoy (`:9095`) which routes through the Consul mesh gateway to ocp-dc frontend.
+The `vm-client` binary (FakeService) only forwards GET requests to its upstream. To get a cross-DC trace, stop the local `web` service so Consul's ServiceResolver routes `client`'s Envoy upstream (port 9095) through the mesh gateway to ocp-dc frontend.
+
+```bash
+# On EC2 — stop local web to activate failover
+sudo systemctl stop web-envoy
+sudo pkill -f vm-web 2>/dev/null; true
+
+# Verify port 9090 is gone and Envoy now routes to ocp-dc
+curl -s http://localhost:9090/health -o /dev/null -w "web local (expect 000): %{http_code}\n"
+sleep 15   # wait for Consul health check to mark web critical
+curl -s http://localhost:9095/products -o /dev/null -w "via Envoy failover (expect 200): %{http_code}\n"
+```
+
+### 2. Start vm-client and Drive Traffic (EC2)
+
+`vm-client` is a FakeService tracing proxy: listens on `:9080`, wraps each request in an OTel span, and forwards GET requests to Envoy (`:9095`), which now routes through the Consul mesh gateway to ocp-dc frontend.
 
 ```bash
 # On EC2 — Terminal 1: start the tracer (if not already running)
@@ -315,40 +330,37 @@ tail -f /tmp/vm-client.log
 
 ```bash
 # On EC2 — Terminal 2: drive traffic through the tracer on port 9080
-# (NOT port 9095 — 9095 is the raw Envoy upstream, which bypasses the tracer)
+# Use GET only — vm-client (FakeService) converts POSTs to GET on upstream calls
 while true; do
   curl -s http://localhost:9080/products > /dev/null
-  curl -s -X POST http://localhost:9080/cart/demo-user/items \
-    -H "Content-Type: application/json" \
-    -d '{"product_id":"prod-1","quantity":1}' > /dev/null
-  curl -s -X POST http://localhost:9080/checkout \
-    -H "Content-Type: application/json" \
-    -d '{"user_id":"demo-user"}' > /dev/null
+  curl -s http://localhost:9080/ > /dev/null
   sleep 2
 done
 ```
 
-Watch Terminal 1 — you should see requests logged. If port 9095 refuses, check the sidecar:
+Terminal 1 should log lines like:
+```
+[client] ... msg="upstream call completed" upstream="http://localhost:9095" code="OK"
+```
+
+If port 9095 returns errors, check the sidecar:
 
 ```bash
 systemctl is-active client-envoy
 curl -s http://localhost:9095/health -o /dev/null -w "%{http_code}\n"
-# Expect 200 — if not, run: sudo systemctl restart client-envoy
+# Expect 200 — if not: sudo systemctl restart client-envoy
 ```
 
-### 2. In Grafana → Explore → Tempo
+### 3. In Grafana → Explore → Tempo
 
 ```
 { resource.service.name = "client" }
 ```
 
-Open a trace — shows:
-`client → frontend → checkout → cart → inventory → payment`
-
-The `client` span originates on the EC2 VM (tagged `dc=vm-dc`). All other spans are from ocp-dc. One trace ID, two datacenters.
+Open any trace — the root span is `client` (originating on EC2 / vm-dc). Expand it to see the full call chain through ocp-dc. One trace ID, two datacenters.
 
 **Demo script:**
-> *"The client service is running on an EC2 VM. It's talking through the Consul mesh gateway peering tunnel to frontend in OpenShift. The W3C traceparent header crossed that gateway — and every span from both environments is in Tempo under the same trace ID."*
+> *"The client service is a Go process running on an EC2 VM in a different network. It's calling through the Consul mesh gateway peering tunnel into OpenShift. The W3C traceparent header crossed that boundary — every span from both environments lands in Tempo under the same trace ID. No VPN, no special instrumentation for the gateway — the mesh handles it transparently."*
 
 ---
 
