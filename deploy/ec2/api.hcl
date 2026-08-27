@@ -7,9 +7,10 @@
 #   sudo consul reload
 
 service {
-  name = "api"
-  port = 9092
-  tags = ["vm-dc", "fake-service", "tracing-demo"]
+  name    = "api"
+  address = "10.0.0.5"
+  port    = 9092
+  tags    = ["vm-dc", "fake-service", "tracing-demo"]
 
   token = "REDACTED_API_TOKEN"
 

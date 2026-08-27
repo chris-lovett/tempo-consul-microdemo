@@ -9,11 +9,12 @@
 #   sudo consul reload
 
 service {
-  name = "client"
-  port = 9080
-  tags = ["vm-dc", "tracing-demo"]
+  name    = "client"
+  address = "10.0.0.5"
+  port    = 9080
+  tags    = ["vm-dc", "tracing-demo"]
 
-  token = "REDACTED_WEB_TOKEN"
+  token = "REDACTED_CLIENT_TOKEN"
 
   connect {
     sidecar_service {

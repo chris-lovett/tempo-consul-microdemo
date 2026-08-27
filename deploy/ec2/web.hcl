@@ -18,9 +18,10 @@
 #   consul reload
 
 service {
-  name = "web"
-  port = 9090
-  tags = ["vm-dc", "tracing-demo"]
+  name    = "web"
+  address = "10.0.0.5"
+  port    = 9090
+  tags    = ["vm-dc", "tracing-demo"]
 
   token = "REDACTED_WEB_TOKEN"
 
