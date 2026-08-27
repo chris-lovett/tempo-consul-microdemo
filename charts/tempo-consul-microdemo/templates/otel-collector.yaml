@@ -29,12 +29,33 @@ data:
         check_interval: 1s
         limit_mib: 256
         spike_limit_mib: 64
+      filter/drop_health_checks:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["http.target"] == "/health"'
+            - 'attributes["http.target"] == "/ready"'
+            - 'attributes["http.target"] == "/live"'
+            - 'IsMatch(attributes["http.url"], ".*/health$")'
+            - 'attributes["rpc.method"] == "Check" and attributes["rpc.service"] == "grpc.health.v1.Health"'
+            - 'name == "grpc.health.v1.Health/Check"'
+
+    connectors:
+      servicegraph:
+        dimensions:
+          - http.method
+          - http.status_code
+      spanmetrics:
+        namespace: traces
 
     exporters:
       otlp:
         endpoint: {{ .Values.otelCollector.tempoEndpoint | quote }}
         tls:
           insecure: {{ .Values.otelCollector.tempoTLSInsecure }}
+      prometheus:
+        endpoint: "0.0.0.0:8888"
+        namespace: otelcol
       {{- if .Values.otelCollector.debug }}
       debug:
         verbosity: detailed
@@ -45,12 +66,17 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
+          processors: [memory_limiter, filter/drop_health_checks, batch]
           exporters:
             - otlp
+            - spanmetrics
+            - servicegraph
             {{- if .Values.otelCollector.debug }}
             - debug
             {{- end }}
+        metrics/servicegraph:
+          receivers: [servicegraph, spanmetrics]
+          exporters: [prometheus]
 ---
 # ─── Deployment ───────────────────────────────────────────────────────────────
 apiVersion: apps/v1
