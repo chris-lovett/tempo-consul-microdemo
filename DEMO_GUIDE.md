@@ -353,11 +353,20 @@ curl -s http://localhost:9095/health -o /dev/null -w "%{http_code}\n"
 
 ### 3. In Grafana → Explore → Tempo
 
+Use the **Search tab** (not TraceQL) — the Grafana UI validator rejects `resource.` syntax even though Tempo's server accepts it:
+
+1. Select **Search** tab
+2. Set **Service Name = `client`**
+3. Click **Run query**
+
+Or switch to **TraceQL** tab and use:
 ```
 { resource.service.name = "client" }
 ```
 
-Open any trace — the root span is `client` (originating on EC2 / vm-dc). Expand it to see the full call chain through ocp-dc. One trace ID, two datacenters.
+> If Grafana shows a client-side parse error on `resource.`, click **Run query** anyway — Tempo evaluates it correctly server-side and results will appear.
+
+Open any trace — the root span is `client` (originating on EC2 / vm-dc). Look for **`dc = vm-dc`** in the Resource Attributes panel — that's the stamp proving this span originated on the EC2 VM. Expand it to see the full call chain through ocp-dc under the same trace ID.
 
 **Demo script:**
 > *"The client service is a Go process running on an EC2 VM in a different network. It's calling through the Consul mesh gateway peering tunnel into OpenShift. The W3C traceparent header crossed that boundary — every span from both environments lands in Tempo under the same trace ID. No VPN, no special instrumentation for the gateway — the mesh handles it transparently."*
@@ -385,11 +394,14 @@ Open any trace — the root span is `client` (originating on EC2 / vm-dc). Expan
 # Combined: slow + errored checkout
 { .service.name = "checkout" && duration > 300ms && rootSpan = true }
 
-# All vm-dc spans
+# All vm-dc spans (use Search tab in Grafana UI, or run TraceQL directly)
 { resource.dc = "vm-dc" }
 
 # Cross-DC: client origin
 { resource.service.name = "client" }
+
+# NOTE: Grafana's TraceQL editor may show a client-side parse error on
+# resource.* syntax. Click Run query anyway — Tempo evaluates it correctly.
 ```
 
 ---
