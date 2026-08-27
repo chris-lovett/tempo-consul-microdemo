@@ -127,6 +127,12 @@ curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
 ### 2. Fire a Checkout
 
 ```bash
+# Add an item to cart first
+curl -s -X POST https://${FRONTEND_URL}/cart/demo-user/items \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"prod-1","quantity":1}' > /dev/null
+
+# Trigger checkout — will fail with 409 due to contention
 curl -s -X POST https://${FRONTEND_URL}/checkout \
   -H "Content-Type: application/json" \
   -d '{"user_id":"demo-user"}' \
@@ -162,6 +168,11 @@ curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
   -H "Content-Type: application/json" \
   -d '{"contention_rate":0.0}'
 
+# Add to cart and checkout — should succeed now
+curl -s -X POST https://${FRONTEND_URL}/cart/demo-user/items \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"prod-1","quantity":1}' > /dev/null
+
 curl -s -X POST https://${FRONTEND_URL}/checkout \
   -H "Content-Type: application/json" \
   -d '{"user_id":"demo-user"}'
@@ -186,6 +197,11 @@ curl -s -X POST https://${FRONTEND_URL}/payment/admin/config \
 ### 2. Fire a Checkout
 
 ```bash
+# Add an item to cart first
+curl -s -X POST https://${FRONTEND_URL}/cart/demo-user/items \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"prod-1","quantity":1}' > /dev/null
+
 curl -s -X POST https://${FRONTEND_URL}/checkout \
   -H "Content-Type: application/json" \
   -d '{"user_id":"demo-user"}' \
