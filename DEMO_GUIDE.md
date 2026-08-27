@@ -164,9 +164,14 @@ curl -s -X POST https://${FRONTEND_URL}/checkout \
 ### 5. Reset and Show Recovery
 
 ```bash
+# Disable contention and zero out payment failures for a clean success
 curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
   -H "Content-Type: application/json" \
   -d '{"contention_rate":0.0}'
+
+curl -s -X POST https://${FRONTEND_URL}/payment/admin/config \
+  -H "Content-Type: application/json" \
+  -d '{"failure_rate":0.0,"latency_ms":50}'
 
 # Add to cart and checkout — should succeed now
 curl -s -X POST https://${FRONTEND_URL}/cart/demo-user/items \
