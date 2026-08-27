@@ -55,7 +55,6 @@ data:
           insecure: {{ .Values.otelCollector.tempoTLSInsecure }}
       prometheus:
         endpoint: "0.0.0.0:8889"
-        namespace: otelcol
       {{- if .Values.otelCollector.debug }}
       debug:
         verbosity: detailed
