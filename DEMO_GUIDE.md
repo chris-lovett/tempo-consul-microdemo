@@ -273,7 +273,12 @@ done
 
 > Run this 2–3 minutes before the demo to pre-populate the graph.
 
-### 2. Open Grafana → Dashboards → "Tempo / Service Graph"
+### 2. Open Grafana → Explore → Tempo → Service Graph tab
+
+1. Navigate to `${GRAFANA_URL}/explore`
+2. Select **Tempo** as the data source
+3. Click the **Service Graph** tab (next to Search and TraceQL)
+4. Click **Run query**
 
 **Key points:**
 - Every arrow = real calls that happened — the graph builds itself from traffic
