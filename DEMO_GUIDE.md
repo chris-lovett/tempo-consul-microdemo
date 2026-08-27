@@ -297,7 +297,7 @@ You should see a live node graph: `user → frontend → cart → catalog`, `fro
 
 **Goal**: Show that a request originating on an EC2 VM crosses the Consul mesh gateway into OpenShift, and every span lands in Tempo under the same trace ID.
 
-> **Current state**: The traffic loop on EC2 is routing `client → frontend` directly via the Consul ServiceResolver (web is healthy but the failover path is active due to ACL token rotation earlier today). This still demonstrates cross-DC observability — the `client` span from the EC2 VM and all ocp-dc spans appear in one trace.
+> **Setup notes**: EC2 otelcol exports spans via OTLP HTTP to the otel-collector OpenShift Route (NodePort 30317 is blocked by ROSA security group). The `client` FakeService only forwards GET requests — use GET-only traffic. Stop local `web` so the ServiceResolver fails over client's Envoy to ocp-dc frontend.
 
 ### 1. Prerequisite: trigger failover (stop local web)
 

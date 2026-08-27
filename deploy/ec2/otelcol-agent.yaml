@@ -48,14 +48,14 @@ processors:
         action: insert
 
 exporters:
-  otlp:
-    # otel-collector exported from ocp-dc, reachable through the mesh gateway.
-    # Consul transparent proxy resolves this via the peering virtual IP.
-    # If transparent proxy is not configured for the otelcol-agent service,
-    # use the explicit upstream local bind port instead (see web.hcl upstream block).
-    endpoint: "otel-collector.virtual.ocp-dc.consul:4317"
+  otlphttp:
+    # otel-collector in ocp-dc, exposed via OpenShift Route over HTTPS.
+    # NodePort (30317) is blocked by the ROSA security group from EC2.
+    # The Route terminates TLS at the OpenShift router and forwards to the
+    # otel-collector ClusterIP service inside the cluster.
+    endpoint: "https://otel-collector-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com"
     tls:
-      insecure: true
+      insecure: false
   # Uncomment to log every span to the collector's stdout for debugging
   # debug:
   #   verbosity: detailed
@@ -66,4 +66,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
-      exporters: [otlp]
+      exporters: [otlphttp]
