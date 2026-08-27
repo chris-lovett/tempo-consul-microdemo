@@ -254,7 +254,7 @@ curl -s -X POST https://${FRONTEND_URL}/payment/admin/config \
 
 ## Demo Flow 4: Service Graph (Dependency Map)
 
-**Goal**: Show the real-time dependency graph built automatically from production traffic.
+**Goal**: Show the real-time dependency graph built automatically from production traffic — no manual configuration, no architecture diagrams to maintain.
 
 ### 1. Generate Burst Traffic
 
@@ -280,14 +280,16 @@ done
 3. Click the **Service Graph** tab (next to Search and TraceQL)
 4. Click **Run query**
 
-**Key points:**
-- Every arrow = real calls that happened — the graph builds itself from traffic
-- **cart → catalog**: A back-call not obvious from architecture diagrams
-- **checkout → inventory + payment**: Parallel calls visible in the graph
-- Click any node to filter traces for that service
+You should see a live node graph: `user → frontend → cart → catalog`, `frontend → checkout → inventory/payment`, with avg latency and RPS on each edge.
+
+**Key talking points:**
+- Every arrow = real calls observed in the last few minutes — the graph builds itself from traffic
+- **cart → catalog**: A back-call that would never appear in a hand-drawn diagram
+- **checkout → inventory + payment**: Parallel downstream calls visible as separate edges
+- Click any node → jumps to traces filtered for that service (Explore → Search tab)
 
 **Demo script:**
-> *"This is your live architecture diagram. No Visio, no documentation that goes stale. It built itself from actual traffic in the last few minutes. Every node is clickable — it drills straight into the traces."*
+> *"This is your live architecture diagram. No Visio, no runbook that goes stale. It built itself from actual traffic in the last few minutes. Every node is clickable — it drills straight into the traces."*
 
 ---
 
