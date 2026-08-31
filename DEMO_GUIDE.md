@@ -372,18 +372,19 @@ curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
 
 ### Setup: Apply All Config (First Time or After Reset)
 
-If rebuilding from scratch, see [`deploy/consul/peering-setup.md`](deploy/consul/peering-setup.md). For an existing environment:
+> The Consul config entries on vm-dc were applied by Terraform at provision time. For the running instance, only verify they're present. For a full rebuild from scratch, see [`deploy/consul/peering-setup.md`](deploy/consul/peering-setup.md).
 
-**vm-dc (on EC2):**
+**vm-dc — verify config entries are present (on EC2):**
 
 ```bash
-export CONSUL_HTTP_TOKEN=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8
-export CONSUL_HTTP_ADDR=http://127.0.0.1:8500
-cd /path/to/repo
-bash deploy/ec2/setup.sh
+# Both should return a Kind value, not null
+curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
+  http://127.0.0.1:8500/v1/config/exported-services/default | jq '.Kind'
+curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
+  http://127.0.0.1:8500/v1/config/service-resolver/web | jq '.Kind'
 ```
 
-**ocp-dc (on Mac):**
+**ocp-dc — re-apply if needed (on Mac):**
 
 ```bash
 # Export otel-collector and frontend to vm-dc peer
