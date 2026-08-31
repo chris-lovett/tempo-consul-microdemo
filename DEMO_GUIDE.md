@@ -363,8 +363,8 @@ kubectl get pods -n tempo
 sudo systemctl status web api --no-pager | grep -E "Active:"
 
 # vm-dc — peering ACTIVE and frontend imported
-export CONSUL_HTTP_TOKEN=$(grep BOOTSTRAP_TOKEN ~/vm-dc.env | cut -d= -f2)
-curl -s -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" \
+# (vm-dc.env lives on your Mac; use the bootstrap token directly on EC2)
+curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
   http://127.0.0.1:8500/v1/peering/ocp-dc \
   | jq '{State:.State, Imported:.StreamStatus.ImportedServices}'
 # Expected: "State": "ACTIVE" and "default/tracing-demo/frontend" in Imported
@@ -377,7 +377,7 @@ If rebuilding from scratch, see [`deploy/consul/peering-setup.md`](deploy/consul
 **vm-dc (on EC2):**
 
 ```bash
-source ~/vm-dc.env
+export CONSUL_HTTP_TOKEN=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8
 export CONSUL_HTTP_ADDR=http://127.0.0.1:8500
 cd /path/to/repo
 bash deploy/ec2/setup.sh
@@ -762,7 +762,7 @@ curl -s https://${FRONTEND_URL}/products | jq '.[0].name'
 | `failed_eds_health` on failover cluster | `curl localhost:<admin>/clusters \| grep failover` | Verify `service-resolver-web-failover.hcl` is applied |
 | Client sidecar fails to start | `cat /tmp/envoy-client.log` | Kill stale envoy processes; use `-grpc-addr 127.0.0.1:8502` |
 | OTel spans not reaching Tempo from EC2 | `journalctl -u otelcol -n 30` | Confirm OTLP HTTP export to OpenShift Route is reachable (NodePort 30317 is blocked by ROSA SG) |
-| `consul reload` returns 403 | Token lacks `agent:write` | Use bootstrap token from `~/vm-dc.env` |
+| `consul reload` returns 403 | Token lacks `agent:write` | Use bootstrap token: `c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8` |
 
 ---
 
