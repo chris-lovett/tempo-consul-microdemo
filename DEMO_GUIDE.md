@@ -495,45 +495,24 @@ ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
 
 ### Scenario A: Simple Cross-DC Trace (vm-client → ocp-dc frontend)
 
-**Story:** Drive GET traffic from the EC2 client, which routes through the Consul mesh gateway into OpenShift frontend. Show the cross-DC span in Tempo.
+**Story:** Drive traffic from the EC2 client directly to ocp-dc frontend (web stopped) to show the cross-DC span in Tempo.
 
-#### Step 1 — Trigger failover (stop local web)
-
-```bash
-# On EC2 — stop local web so Consul's ServiceResolver routes client's upstream to ocp-dc
-sudo systemctl stop web-envoy
-sudo pkill -f vm-web 2>/dev/null; true
-
-# Verify port 9090 is gone and Envoy now routes to ocp-dc
-curl -s http://localhost:9090/health -o /dev/null -w "web local (expect 000): %{http_code}\n"
-sleep 15   # wait for Consul health check to mark web critical
-curl -s http://localhost:9095/products -o /dev/null -w "via Envoy failover (expect 200): %{http_code}\n"
-```
-
-#### Step 2 — Start vm-client and drive traffic (EC2)
+#### Step 1 — Stop web so client routes directly to ocp-dc (EC2)
 
 ```bash
-# Terminal 1: start the tracer
-sudo pkill -f vm-client 2>/dev/null; sleep 1
-NAME=client LISTEN_ADDR=0.0.0.0:9080 UPSTREAM_URIS=http://localhost:9095 \
-OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
-  /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
-tail -f /tmp/vm-client.log
-# Expected: "Started service: name=client ... listenAddress=0.0.0.0:9080"
+sudo systemctl stop web
+# Consul marks web critical after ~5s and pushes EDS update to client-envoy
 ```
+
+#### Step 2 — Watch live traffic (EC2)
 
 ```bash
-# Terminal 2: drive GET traffic (vm-client/FakeService only forwards GETs)
-while true; do
-  curl -s http://localhost:9080/products > /dev/null
-  curl -s http://localhost:9080/ > /dev/null
-  sleep 2
-done
+sudo journalctl -u client -f
 ```
 
-Terminal 1 should log:
+Within ~5 seconds you'll see traffic switch to `dc=ocp-dc`:
 ```
-[client] ... msg="upstream call completed" upstream="http://localhost:9095" code="OK"
+22:35:14  http=200  dc=ocp-dc   product="Wireless Headphones"  order=ord-xxx  payment=authorized
 ```
 
 #### Step 3 — Show the trace in Grafana → Explore → Tempo
@@ -559,31 +538,35 @@ Open any trace. The root span is `client` (originating on EC2 / vm-dc). Look for
 
 **Story:** The EC2 `web` service becomes unhealthy. Consul detects the failure and routes `client` traffic to `frontend` in ocp-dc — automatically, with no app changes, no DNS changes, no redeployment.
 
-#### Step 1 — Start the traffic loop and show the baseline (EC2 Terminal 1)
+#### Pre-flight reset (Mac)
 
 ```bash
-# Start services if not already running
-sudo systemctl start web api otelcol
-
-# Start vm-client
-sudo pkill -f vm-client 2>/dev/null; sleep 1
-NAME=client \
-LISTEN_ADDR=0.0.0.0:9080 \
-UPSTREAM_URIS=http://localhost:9095 \
-OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
-  /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
-
-# Continuous traffic loop
-while true; do
-  response=$(curl -s --max-time 3 http://localhost:9080/)
-  name=$(echo "$response" | jq -r '.upstream_calls | to_entries[0].value.name // empty' 2>/dev/null)
-  code=$(echo "$response" | jq -r '.upstream_calls | to_entries[0].value.code // empty' 2>/dev/null)
-  echo "$(date +%H:%M:%S) served_by=${name:-unknown} http=$code"
-  sleep 1
-done
+FRONTEND_URL=frontend-tracing-demo.apps.rosa.cluster2.6cxo.p3.openshiftapps.com
+curl -s -X DELETE "https://${FRONTEND_URL}/cart/demo-user"
+curl -s -X POST  "https://${FRONTEND_URL}/inventory/admin/stock/reset" | jq '.stock."prod-1"'
+curl -s -X POST  "https://${FRONTEND_URL}/payment/admin/config" \
+  -H "Content-Type: application/json" -d '{"failure_rate":0.02,"latency_ms":50}'
 ```
 
-You'll see `served_by=web http=200` on every line while EC2 is healthy.
+#### Step 1 — Verify baseline and watch live traffic (EC2 Terminal 1)
+
+```bash
+# All 7 services must be active
+sudo systemctl is-active web api web-envoy api-envoy client-envoy client otelcol
+# Expected: 7 lines of "active"
+
+# If web-envoy or client are inactive, start them
+sudo systemctl start web-envoy client
+
+# Watch the live traffic log — this is your demo window
+sudo journalctl -u client -f
+```
+
+You'll see clean lines every second while EC2 is healthy:
+```
+22:38:21  http=200  dc=vm-dc   product="Wireless Headphones"  order=ord-xxx  payment=authorized  total=79.99
+22:38:22  http=200  dc=vm-dc   product="Mechanical Keyboard"  order=ord-xxx  payment=authorized  total=129.99
+```
 
 #### Step 2 — Show baseline in Grafana
 
@@ -598,19 +581,16 @@ Open Grafana → Explore → Tempo, Search tab, Service Name = `client`. Open a 
 sudo systemctl stop web
 ```
 
-Watch Terminal 1 — within ~10 seconds:
+Watch Terminal 1 — within ~2 seconds:
 
 ```
-20:40:40 served_by=web    http=200
-20:40:41 served_by=unknown http=503   ← single in-flight during health check window
-20:40:42 served_by=unknown http=404   ← Consul failover active, client now routes to ocp-dc frontend directly
-20:40:43 served_by=unknown http=404
+22:35:13  http=503  dc=unknown  ← one request while Consul EDS propagates
+22:35:14  http=200  dc=ocp-dc   product="Wireless Headphones"  order=ord-xxx  payment=authorized  ← FAILOVER LIVE
+22:35:15  http=200  dc=ocp-dc   product="Mechanical Keyboard"  ...
 ```
-
-> The `http=404` response is expected — `frontend` on ocp-dc doesn't expose a root `/` route. The routing itself is working; requests are reaching ocp-dc.
 
 **Demo script:**
-> *"Web on the EC2 VM just stopped. Consul's ServiceResolver saw zero healthy local instances and began routing the client's upstream through the mesh gateway to frontend in OpenShift. The traffic loop never stopped. No app changes. No DNS changes. Under 10 seconds."*
+> *"Web on the EC2 VM just stopped. Consul's ServiceResolver saw zero healthy local instances and routed the client's upstream through the mesh gateway to frontend in OpenShift — within two seconds, one blip. The client code never changed. No DNS. No redeployment."*
 
 #### Step 4 — Show the failover trace in Tempo
 
@@ -618,7 +598,7 @@ Watch Terminal 1 — within ~10 seconds:
 { resource.service.name = "client" }
 ```
 
-Sort by most recent. Click a trace from after the failover — the waterfall now shows `client → frontend → checkout → cart → inventory → payment`. The `web` and `api` spans are gone (web is down); `frontend` is the first child, inheriting the trace context from `client` through the mesh gateway.
+Sort by most recent. Click a trace from after the failover — the waterfall now shows `client → frontend → checkout → cart → inventory → payment`. The `web` and `api` spans are gone (web is down); `frontend` is the first child span, inheriting the trace context from `client` through the mesh gateway.
 
 **Demo script:**
 > *"The W3C traceparent header crossed the mesh gateway. The request that started on the EC2 VM was served by frontend in Kubernetes — and every span is in Tempo under the same trace ID. The trace itself documents the datacenter handoff."*
@@ -629,7 +609,7 @@ Sort by most recent. Click a trace from after the failover — the waterfall now
 sudo systemctl start web
 ```
 
-Within 10 seconds the health check passes, Consul stops using the failover target, and Terminal 1 returns to `served_by=web http=200` with the full cross-DC waterfall.
+Within ~5 seconds the health check passes, Consul stops using the failover target, and Terminal 1 returns to `dc=vm-dc` with the full cross-DC waterfall.
 
 ---
 
