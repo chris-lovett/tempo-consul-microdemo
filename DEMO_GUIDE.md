@@ -372,16 +372,39 @@ curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
 
 ### Setup: Apply All Config (First Time or After Reset)
 
-> The Consul config entries on vm-dc were applied by Terraform at provision time. For the running instance, only verify they're present. For a full rebuild from scratch, see [`deploy/consul/peering-setup.md`](deploy/consul/peering-setup.md).
+> The Consul config entries on vm-dc were applied by Terraform at provision time — the repo is not cloned on EC2. For a full rebuild from scratch, see [`deploy/consul/peering-setup.md`](deploy/consul/peering-setup.md).
 
-**vm-dc — verify config entries are present (on EC2):**
+**vm-dc — verify and apply config entries (on EC2):**
 
 ```bash
-# Both should return a Kind value, not null
-curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
-  http://127.0.0.1:8500/v1/config/exported-services/default | jq '.Kind'
-curl -s -H "X-Consul-Token: c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8" \
-  http://127.0.0.1:8500/v1/config/service-resolver/web | jq '.Kind'
+TOKEN=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8
+
+# Both should return a Kind value — if either returns null, apply the block below
+CONSUL_HTTP_TOKEN=$TOKEN consul config list -kind exported-services
+CONSUL_HTTP_TOKEN=$TOKEN consul config list -kind service-resolver
+```
+
+If `service-resolver` is missing (returns empty), apply it:
+
+```bash
+TOKEN=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8
+CONSUL_HTTP_TOKEN=$TOKEN CONSUL_HTTP_ADDR=http://127.0.0.1:8500 \
+consul config write - <<EOF
+Kind = "service-resolver"
+Name = "web"
+
+Failover = {
+  "*" = {
+    Targets = [
+      {
+        Peer      = "ocp-dc"
+        Service   = "frontend"
+        Namespace = "tracing-demo"
+      }
+    ]
+  }
+}
+EOF
 ```
 
 **ocp-dc — re-apply if needed (on Mac):**
