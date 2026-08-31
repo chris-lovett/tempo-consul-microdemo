@@ -19,7 +19,7 @@
 
 service {
   name    = "web"
-  address = "10.0.0.5"
+  address = "10.0.0.28"
   port    = 9090
   tags    = ["vm-dc", "tracing-demo"]
 

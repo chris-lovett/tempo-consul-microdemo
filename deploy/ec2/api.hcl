@@ -8,7 +8,7 @@
 
 service {
   name    = "api"
-  address = "10.0.0.5"
+  address = "10.0.0.28"
   port    = 9092
   tags    = ["vm-dc", "fake-service", "tracing-demo"]
 
