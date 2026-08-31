@@ -10,7 +10,7 @@
 
 service {
   name    = "client"
-  address = "10.0.0.28"
+  address = "10.0.0.91"
   port    = 9080
   tags    = ["vm-dc", "tracing-demo"]
 
