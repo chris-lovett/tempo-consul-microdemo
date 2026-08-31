@@ -456,11 +456,11 @@ curl -s http://localhost:9095/products -o /dev/null -w "via Envoy failover (expe
 ```bash
 # Terminal 1: start the tracer
 sudo pkill -f vm-client 2>/dev/null; sleep 1
-SERVICE_NAME=client PORT=9080 UPSTREAM_URI=http://localhost:9095 \
+NAME=client LISTEN_ADDR=0.0.0.0:9080 UPSTREAM_URIS=http://localhost:9095 \
 OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
   /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
 tail -f /tmp/vm-client.log
-# Expected: "[client] OTel tracer initialised" and "listening on :9080"
+# Expected: "Started service: name=client ... listenAddress=0.0.0.0:9080"
 ```
 
 ```bash
@@ -508,9 +508,9 @@ sudo systemctl start web api otelcol
 
 # Start vm-client
 sudo pkill -f vm-client 2>/dev/null; sleep 1
-SERVICE_NAME=client \
-PORT=9080 \
-UPSTREAM_URI=http://localhost:9095 \
+NAME=client \
+LISTEN_ADDR=0.0.0.0:9080 \
+UPSTREAM_URIS=http://localhost:9095 \
 OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
   /usr/local/bin/vm-client > /tmp/vm-client.log 2>&1 &
 
