@@ -21,11 +21,12 @@ apt-get update -y -q
 apt-get install -y -q consul-enterprise=2.0.1+ent-1
 
 # ── 2. Install Envoy via func-e ───────────────────────────────────────────────
-echo "==> Installing Envoy 1.29.9..."
+# Consul 2.0.1+ent requires Envoy 1.35–1.38 (1.29.x is rejected by the xDS server).
+echo "==> Installing Envoy 1.35.3..."
 curl -sL 'https://func-e.io/install.sh' | bash -s -- -b /usr/local/bin
-func-e use 1.29.9
+func-e use 1.35.3
 # func-e installs to the calling user's home; find and copy
-ENVOY_BIN=$(find /root /home -name envoy -path "*/1.29.9/*" 2>/dev/null | head -1)
+ENVOY_BIN=$(find /root /home -name envoy -path "*/1.35.3/*" 2>/dev/null | head -1)
 cp "$ENVOY_BIN" /usr/local/bin/envoy
 chmod +x /usr/local/bin/envoy
 
