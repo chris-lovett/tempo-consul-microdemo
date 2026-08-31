@@ -59,7 +59,7 @@ service {
 
   check {
     http     = "http://localhost:9090/health"
-    interval = "10s"
+    interval = "5s"
     timeout  = "3s"
   }
 }

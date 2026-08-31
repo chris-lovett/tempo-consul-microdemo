@@ -223,17 +223,17 @@ echo "==> Writing systemd units..."
 
 cat > /etc/systemd/system/web.service <<'SVC'
 [Unit]
-Description=Fake Service - web
+Description=vm-web frontend service
 After=consul.service
 Requires=consul.service
 [Service]
-Environment=NAME=web
-Environment=LISTEN_ADDR=0.0.0.0:9090
-Environment=UPSTREAM_URIS=http://localhost:9091
+Environment=SERVICE_NAME=web
+Environment=PORT=9090
+Environment=API_URI=http://localhost:9091
+Environment=FRONTEND_URI=http://localhost:9093
 Environment=OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
 ExecStart=/usr/local/bin/vm-web
-Restart=on-failure
-RestartSec=5s
+Restart=no
 [Install]
 WantedBy=multi-user.target
 SVC
