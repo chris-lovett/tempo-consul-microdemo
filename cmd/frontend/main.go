@@ -51,7 +51,7 @@ func main() {
 		span := tracing.SpanFromContext(r)
 		tracing.Tag(span, "user.id", userID)
 		proxyTo(client, w, r, cartURL+"/cart/"+userID)
-	}).Methods(http.MethodGet)
+	}).Methods(http.MethodGet, http.MethodDelete)
 
 	r.HandleFunc("/cart/{user_id}/items", func(w http.ResponseWriter, r *http.Request) {
 		userID := mux.Vars(r)["user_id"]
@@ -66,6 +66,7 @@ func main() {
 	// Admin proxies for demo controls (passed through to downstream services)
 	r.HandleFunc("/payment/admin/config", proxy(client, getenv("PAYMENT_URL", "http://localhost:8084")+"/admin/config")).Methods(http.MethodPost)
 	r.HandleFunc("/inventory/admin/config", proxy(client, getenv("INVENTORY_URL", "http://localhost:8085")+"/admin/config")).Methods(http.MethodPost)
+	r.HandleFunc("/inventory/admin/stock/reset", proxy(client, getenv("INVENTORY_URL", "http://localhost:8085")+"/admin/stock/reset")).Methods(http.MethodPost)
 
 	addr := ":" + port
 	log.Printf("listening on %s", addr)

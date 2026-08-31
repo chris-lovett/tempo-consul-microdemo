@@ -219,7 +219,12 @@ func addToCart(ctx context.Context, client *http.Client, frontendURI, userID, pr
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errBody map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&errBody)
+		return fmt.Errorf("cart returned %d: %s", resp.StatusCode, errBody["error"])
+	}
 	return nil
 }
 
@@ -236,6 +241,11 @@ func triggerCheckout(ctx context.Context, client *http.Client, frontendURI, user
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errBody map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&errBody)
+		return nil, fmt.Errorf("checkout returned %d: %s", resp.StatusCode, errBody["error"])
+	}
 	var result checkoutResp
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err

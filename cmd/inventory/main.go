@@ -69,6 +69,14 @@ func (s *inventoryStore) getStock(productID string) (int, bool) {
 	return qty, ok
 }
 
+func (s *inventoryStore) resetStock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, v := range initialStock {
+		s.stock[k] = v
+	}
+}
+
 func main() {
 	serviceName := getenv("SERVICE_NAME", "inventory")
 	port := getenv("PORT", "8085")
@@ -91,6 +99,7 @@ func main() {
 	r.HandleFunc("/reserve", reserveHandler(store)).Methods(http.MethodPost)
 	r.HandleFunc("/stock/{product_id}", stockHandler(store)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/config", adminConfigHandler(store)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/stock/reset", adminStockResetHandler(store)).Methods(http.MethodPost)
 
 	addr := ":" + port
 	log.Printf("listening on %s (contentionRate=%.2f)", addr, contentionRate)
@@ -139,6 +148,23 @@ func stockHandler(store *inventoryStore) http.HandlerFunc {
 			"product_id": productID,
 			"quantity":   qty,
 		})
+	}
+}
+
+// adminStockResetHandler resets all product stock to initial values. Useful for demos
+// after a long traffic run depletes inventory.
+func adminStockResetHandler(store *inventoryStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		store.resetStock()
+		log.Printf("stock reset to initial values")
+		w.Header().Set("Content-Type", "application/json")
+		all := make(map[string]int, len(initialStock))
+		store.mu.Lock()
+		for k, v := range store.stock {
+			all[k] = v
+		}
+		store.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"reset": true, "stock": all})
 	}
 }
 
