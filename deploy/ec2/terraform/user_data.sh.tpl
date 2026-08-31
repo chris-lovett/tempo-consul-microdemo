@@ -227,7 +227,7 @@ After=consul.service
 Requires=consul.service
 [Service]
 Environment=NAME=web
-Environment=PORT=9090
+Environment=LISTEN_ADDR=0.0.0.0:9090
 Environment=UPSTREAM_URIS=http://localhost:9091
 Environment=OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
 ExecStart=/usr/local/bin/vm-web
@@ -244,7 +244,7 @@ After=consul.service
 Requires=consul.service
 [Service]
 Environment=NAME=api
-Environment=PORT=9092
+Environment=LISTEN_ADDR=0.0.0.0:9092
 Environment=OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
 ExecStart=/usr/local/bin/vm-api
 Restart=on-failure
