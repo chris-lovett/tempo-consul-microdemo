@@ -39,6 +39,12 @@ curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
   -H "Content-Type: application/json" \
   -d '{"contention_rate":0.05}'
 
+# Reset inventory stock to initial values (run after any long traffic session)
+curl -s -X POST https://${FRONTEND_URL}/inventory/admin/stock/reset | jq '{reset,prod1:.stock."prod-1"}'
+
+# Clear demo-user cart (run if previous session left items)
+curl -s -X DELETE https://${FRONTEND_URL}/cart/demo-user
+
 # vm-dc (EC2) — all services active
 ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
   "sudo systemctl is-active web api web-envoy api-envoy client-envoy client otelcol"
@@ -748,7 +754,7 @@ done
 | cart | 8082 | `/cart/:user`, `/cart/:user/items` |
 | checkout | 8083 | `/checkout` |
 | payment | 8084 | `/authorize`, `/admin/config` |
-| inventory | 8085 | `/reserve`, `/stock/:id`, `/admin/config` |
+| inventory | 8085 | `/reserve`, `/stock/:id`, `/admin/config`, `/admin/stock/reset` |
 | otel-collector | 4317 | gRPC OTLP receiver |
 
 ---
@@ -779,6 +785,12 @@ curl -s -X POST https://${FRONTEND_URL}/payment/admin/config \
 curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
   -H "Content-Type: application/json" \
   -d '{"contention_rate":0.05}'
+
+# Reset inventory stock to initial values (after long traffic depletes it)
+curl -s -X POST https://${FRONTEND_URL}/inventory/admin/stock/reset
+
+# Clear demo-user cart (leftover items cause 409 on next checkout)
+curl -s -X DELETE https://${FRONTEND_URL}/cart/demo-user
 
 # Trigger Scenario B/C — VM failure
 sudo systemctl stop web          # on EC2
