@@ -38,6 +38,16 @@ curl -s -X POST https://${FRONTEND_URL}/payment/admin/config \
 curl -s -X POST https://${FRONTEND_URL}/inventory/admin/config \
   -H "Content-Type: application/json" \
   -d '{"contention_rate":0.05}'
+
+# vm-dc (EC2) — all services active
+ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
+  "sudo systemctl is-active web api web-envoy api-envoy client-envoy client otelcol"
+# Expected: 7 lines of "active"
+
+# vm-dc — peering to ocp-dc ACTIVE
+ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
+  "consul peering list -token=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8"
+# Expected: ocp-dc  ACTIVE  2  2
 ```
 
 If any pods are scaled to zero:
@@ -432,6 +442,49 @@ kubectl patch serviceintentions allow-frontend-failover -n tracing-demo \
 kubectl get exportedservices,serviceintentions -n tracing-demo
 ```
 
+### Re-Establishing Peering After a Consul Raft Reset
+
+If vm-dc's Consul raft state was wiped (e.g. during troubleshooting) the ocp-dc side will show `vm-dc FAILING`. Use the `PeeringAcceptor` CRD to regenerate the token cleanly — no manual base64/DER manipulation:
+
+```bash
+# 1. Delete the stale FAILING peering on ocp-dc
+oc -n consul exec consul-server-0 -- consul peering delete -name vm-dc \
+  -token=a8adcfaf-9d6a-1aad-2f84-c7ccf2d80066
+
+# 2. Ensure the mesh config entry enables peering through the mesh gateway
+#    (only needed once; skip if already applied)
+oc apply -f deploy/consul/mesh-config.yaml
+
+# 3. Delete and re-create the PeeringAcceptor so a fresh token is generated
+#    with the mesh-gateway LB address (not the internal pod IP)
+oc delete -f deploy/consul/peering-acceptor.yaml
+oc apply  -f deploy/consul/peering-acceptor.yaml
+
+# 4. Wait for Synced=True, then extract the token
+oc -n consul get peeringacceptor vm-dc -o jsonpath='{.status.conditions[0]}'
+oc -n consul get secret peering-token-vm-dc \
+  -o jsonpath='{.data.data}' | base64 -d > /tmp/peering-token-vm-dc.txt
+
+# 5. Verify the token encodes the mesh-gateway address (not 10.x.x.x:8502)
+cat /tmp/peering-token-vm-dc.txt | base64 -d | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); print(d['ServerAddresses'])"
+# Expected: ['ac7b0cfc403cd47af8603a93f1fe2a86-462273150.us-east-2.elb.amazonaws.com:443']
+
+# 6. Copy to vm-dc and establish
+scp -i ~/hashi/aws/vm-dc-demo.pem /tmp/peering-token-vm-dc.txt ubuntu@3.149.3.205:/tmp/
+ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
+  "consul peering establish -name ocp-dc \
+   -peering-token \$(cat /tmp/peering-token-vm-dc.txt) \
+   -token=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8"
+
+# 7. Verify both sides ACTIVE
+oc -n consul exec consul-server-0 -- consul peering list \
+  -token=a8adcfaf-9d6a-1aad-2f84-c7ccf2d80066
+ssh -i ~/hashi/aws/vm-dc-demo.pem ubuntu@3.149.3.205 \
+  "consul peering list -token=c0f2d09d-a9a7-653b-8ddd-88ca6fa101d8"
+# Both should show: State=ACTIVE  Imported=2  Exported=2
+```
+
 ---
 
 ### Scenario A: Simple Cross-DC Trace (vm-client → ocp-dc frontend)
@@ -806,6 +859,8 @@ curl -s https://${FRONTEND_URL}/products | jq '.[0].name'
 | `deploy/ec2/service-resolver-web-failover.hcl` | web fails over to ocp-dc frontend (tracing-demo ns) | EC2: `consul config write` |
 | `deploy/consul/exported-services-ocp-dc-failover.yaml` | Export otel-collector+frontend to vm-dc | ocp-dc: `kubectl apply -n tracing-demo` |
 | `deploy/consul/service-intentions-otel-collector.yaml` | Allow vm-dc peers to reach otel-collector | ocp-dc: `kubectl apply -n tracing-demo` |
+| `deploy/consul/peering-acceptor.yaml` | `PeeringAcceptor` CRD — generates the peering token as a K8s secret with mesh-gateway address | ocp-dc: `oc apply -f` |
+| `deploy/consul/mesh-config.yaml` | Mesh config enabling `peerThroughMeshGateways: true` | ocp-dc: `oc apply -f` |
 | `deploy/consul/peering-setup.md` | Full peering setup sequence (rebuild from scratch) | Reference |
 
 ---
