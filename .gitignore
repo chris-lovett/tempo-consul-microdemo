@@ -28,3 +28,8 @@ Thumbs.db
 values.local.yaml
 secrets.yaml
 /bin/
+
+# Terraform secrets
+deploy/ec2/terraform/terraform.tfvars
+deploy/ec2/terraform/.terraform/
+deploy/ec2/terraform/*.tfstate*
